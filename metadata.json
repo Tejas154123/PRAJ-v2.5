@@ -1,0 +1,7 @@
+{
+  "name": "PRAJ",
+  "description": "Web voice and text interface for PRAJ AI with direct local system control, offline knowledge base, and Gemini intelligence.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
