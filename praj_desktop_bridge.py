@@ -23,21 +23,34 @@ import datetime
 import webbrowser
 import subprocess
 import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
+
+# Multithreaded HTTP server so pings never block
+try:
+    from http.server import ThreadingHTTPServer as ServerClass, BaseHTTPRequestHandler
+except ImportError:
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    from socketserver import ThreadingMixIn
+    class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+        daemon_threads = True
+    ServerClass = ThreadingHTTPServer
 
 # Optional libraries for voice/audio (gracefully fall back if not installed)
 try:
     import pyttsx3
-    tts_engine = pyttsx3.init()
-    tts_engine.setProperty('rate', 175)
-    def speak(text):
-        print(f"PRAJ: {text}")
+    def _speak_worker(text):
         try:
-            tts_engine.say(text)
-            tts_engine.runAndWait()
+            engine = pyttsx3.init()
+            engine.setProperty('rate', 175)
+            engine.say(text)
+            engine.runAndWait()
         except Exception as e:
             print("TTS error:", e)
+
+    def speak(text):
+        print(f"PRAJ: {text}")
+        t = threading.Thread(target=_speak_worker, args=(text,), daemon=True)
+        t.start()
 except Exception:
     def speak(text):
         print(f"PRAJ (voice output): {text}")
@@ -335,12 +348,19 @@ def execute_system_command(raw_command):
     return result
 
 class PrajBridgeHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        # Keep bridge console clean from routine /status polling pings
+        if "/api/status" not in str(args):
+            sys.stdout.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), format%args))
+
     def _set_cors_headers(self, status=200, content_type="application/json"):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "86400")
         self.end_headers()
 
     def do_OPTIONS(self):
@@ -421,7 +441,13 @@ class PrajBridgeHandler(BaseHTTPRequestHandler):
 
 def start_server():
     server_address = ("127.0.0.1", BRIDGE_PORT)
-    httpd = HTTPServer(server_address, PrajBridgeHandler)
+    try:
+        httpd = ServerClass(server_address, PrajBridgeHandler)
+    except Exception as e:
+        print(f"Warning on 127.0.0.1 binding: {e}, falling back to localhost")
+        server_address = ("localhost", BRIDGE_PORT)
+        httpd = ServerClass(server_address, PrajBridgeHandler)
+
     print(f"\n=======================================================")
     print(f"  PRAJ DESKTOP BRIDGE ACTIVE ON http://127.0.0.1:{BRIDGE_PORT}")
     print(f"  Ready to receive commands from the PRAJ Web Interface.")

@@ -4,10 +4,11 @@ export const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:5000';
 
 export async function pingLocalBridge(url = DEFAULT_BRIDGE_URL): Promise<BridgeStatus> {
   const cleanUrl = url.replace(/\/+$/, '');
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 1200);
 
+  // 1. Direct fetch to local bridge
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
     const res = await fetch(`${cleanUrl}/api/status`, {
       method: 'GET',
       signal: controller.signal,
@@ -15,7 +16,6 @@ export async function pingLocalBridge(url = DEFAULT_BRIDGE_URL): Promise<BridgeS
         'Accept': 'application/json',
       },
     });
-
     clearTimeout(timeoutId);
 
     if (res.ok) {
@@ -26,28 +26,52 @@ export async function pingLocalBridge(url = DEFAULT_BRIDGE_URL): Promise<BridgeS
         lastChecked: Date.now(),
         bridgeUrl: cleanUrl,
         platform: data.platform || 'Desktop Host',
-        agentName: data.agent || 'Jarvis Desktop Agent',
+        agentName: data.agent || 'PRAJ Desktop Agent',
         systemTime: data.system_time,
         storedMemory: data.stored_memory,
       };
     }
-    return {
-      connected: false,
-      checking: false,
-      lastChecked: Date.now(),
-      bridgeUrl: cleanUrl,
-      error: `Bridge returned status ${res.status}`,
-    };
-  } catch (err: unknown) {
-    clearTimeout(timeoutId);
-    return {
-      connected: false,
-      checking: false,
-      lastChecked: Date.now(),
-      bridgeUrl: cleanUrl,
-      error: err instanceof Error ? err.message : 'Bridge unreachable',
-    };
+  } catch {
+    // Direct attempt failed (could be Chrome Private Network Access blocking)
   }
+
+  // 2. Fallback to Server Proxy (bypasses browser PNA restrictions)
+  try {
+    const proxyController = new AbortController();
+    const proxyTimeout = setTimeout(() => proxyController.abort(), 3000);
+    const proxyRes = await fetch('/api/bridge-proxy/status', {
+      method: 'GET',
+      signal: proxyController.signal,
+      headers: { 'Accept': 'application/json' },
+    });
+    clearTimeout(proxyTimeout);
+
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      if (data.connected || data.status === 'online') {
+        return {
+          connected: true,
+          checking: false,
+          lastChecked: Date.now(),
+          bridgeUrl: cleanUrl,
+          platform: data.platform || 'Desktop Host',
+          agentName: data.agent || 'PRAJ Desktop Agent',
+          systemTime: data.system_time,
+          storedMemory: data.stored_memory,
+        };
+      }
+    }
+  } catch {
+    // Both failed
+  }
+
+  return {
+    connected: false,
+    checking: false,
+    lastChecked: Date.now(),
+    bridgeUrl: cleanUrl,
+    error: 'Bridge unreachable',
+  };
 }
 
 export async function sendCommandToBridge(
@@ -61,10 +85,11 @@ export async function sendCommandToBridge(
   error?: string;
 }> {
   const cleanUrl = bridgeUrl.replace(/\/+$/, '');
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 4000);
 
+  // 1. Direct attempt
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
     const res = await fetch(`${cleanUrl}/api/command`, {
       method: 'POST',
       signal: controller.signal,
@@ -73,7 +98,6 @@ export async function sendCommandToBridge(
       },
       body: JSON.stringify({ command }),
     });
-
     clearTimeout(timeoutId);
 
     if (res.ok) {
@@ -85,16 +109,28 @@ export async function sendCommandToBridge(
         systemExecuted: data.system_executed ?? true,
       };
     }
+  } catch {
+    // Try fallback
+  }
 
-    return {
-      success: false,
-      reply: '',
-      action: 'error',
-      systemExecuted: false,
-      error: `Bridge HTTP ${res.status}`,
-    };
+  // 2. Server Proxy fallback
+  try {
+    const proxyRes = await fetch('/api/bridge-proxy/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command }),
+    });
+
+    if (proxyRes.ok) {
+      const data = await proxyRes.json();
+      return {
+        success: data.success ?? true,
+        reply: data.reply || '',
+        action: data.action || 'system_command',
+        systemExecuted: data.system_executed ?? true,
+      };
+    }
   } catch (err: unknown) {
-    clearTimeout(timeoutId);
     return {
       success: false,
       reply: '',
@@ -103,6 +139,14 @@ export async function sendCommandToBridge(
       error: err instanceof Error ? err.message : 'Bridge offline',
     };
   }
+
+  return {
+    success: false,
+    reply: '',
+    action: 'error',
+    systemExecuted: false,
+    error: 'Bridge unreachable',
+  };
 }
 
 export async function sendShutdownToBridge(bridgeUrl: string, seconds = 30): Promise<boolean> {
@@ -113,7 +157,18 @@ export async function sendShutdownToBridge(bridgeUrl: string, seconds = 30): Pro
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seconds }),
     });
-    return res.ok;
+    if (res.ok) return true;
+  } catch {
+    // Fallback
+  }
+
+  try {
+    const proxyRes = await fetch('/api/bridge-proxy/shutdown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seconds }),
+    });
+    return proxyRes.ok;
   } catch {
     return false;
   }
@@ -127,7 +182,18 @@ export async function cancelShutdownOnBridge(bridgeUrl: string): Promise<boolean
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
-    return res.ok;
+    if (res.ok) return true;
+  } catch {
+    // Fallback
+  }
+
+  try {
+    const proxyRes = await fetch('/api/bridge-proxy/cancel_shutdown', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    return proxyRes.ok;
   } catch {
     return false;
   }

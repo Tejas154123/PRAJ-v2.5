@@ -50,3 +50,13 @@ export interface KnowledgeItem {
   answer: string;
   category: 'physics' | 'gk' | 'science' | 'geography';
 }
+
+export type AiProvider = 'gemini' | 'openrouter' | 'openai' | 'custom_openai';
+
+export interface AiConfig {
+  provider?: AiProvider;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+

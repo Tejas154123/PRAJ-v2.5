@@ -5,11 +5,14 @@ interface HeaderProps {
   bridgeStatus: BridgeStatus;
   voiceMuted: boolean;
   hasGeminiKey: boolean;
+  activeModel?: string;
+  activeProvider?: string;
   onToggleMute: () => void;
   onOpenBridgeModal: () => void;
   onOpenMemoryModal: () => void;
   onOpenKnowledgeModal: () => void;
   onToggleLogs: () => void;
+  onOpenAiConfig?: () => void;
   showLogs: boolean;
 }
 
@@ -17,11 +20,14 @@ export function Header({
   bridgeStatus,
   voiceMuted,
   hasGeminiKey,
+  activeModel,
+  activeProvider,
   onToggleMute,
   onOpenBridgeModal,
   onOpenMemoryModal,
   onOpenKnowledgeModal,
   onToggleLogs,
+  onOpenAiConfig,
   showLogs,
 }: HeaderProps) {
   return (
@@ -91,17 +97,23 @@ export function Header({
         </button>
 
         {/* AI Mode Pill */}
-        <div
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border ${
+        <button
+          id="btn-ai-mode-status"
+          onClick={onOpenAiConfig}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
             hasGeminiKey
-              ? 'bg-purple-950/30 border-purple-500/40 text-purple-300'
-              : 'bg-blue-950/30 border-blue-500/40 text-blue-300'
+              ? 'bg-purple-950/30 hover:bg-purple-900/40 border-purple-500/40 text-purple-300'
+              : 'bg-blue-950/30 hover:bg-blue-900/40 border-blue-500/40 text-blue-300'
           }`}
-          title={hasGeminiKey ? 'Gemini 3.8 Flash Hybrid AI active' : 'Offline Zero-API Knowledge Mode active'}
+          title={hasGeminiKey ? `Universal AI: ${activeProvider || 'AI'} (${activeModel || 'Active'}). Click to configure OpenRouter, OpenAI, Gemini or Custom.` : 'Offline Zero-API Mode. Click to configure API Key, URL & Model.'}
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>{hasGeminiKey ? 'Gemini AI Active' : 'Offline Zero-API Mode'}</span>
-        </div>
+          <span>
+            {hasGeminiKey
+              ? `${activeProvider ? activeProvider.toUpperCase() : 'AI'}: ${activeModel || 'Active'}`
+              : 'Offline Zero-API Mode'}
+          </span>
+        </button>
 
         {/* Memory Button */}
         <button

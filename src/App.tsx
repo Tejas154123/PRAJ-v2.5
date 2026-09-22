@@ -8,10 +8,11 @@ import { SystemLog } from './components/SystemLog';
 import { BridgeSetupModal } from './components/BridgeSetupModal';
 import { MemoryModal } from './components/MemoryModal';
 import { KnowledgeModal } from './components/KnowledgeModal';
+import { AiConfigBar } from './components/AiConfigBar';
 import { matchOfflineKnowledge } from './data/knowledgeBase';
 import { playChime, speakJarvis, stopSpeaking } from './utils/speech';
 import { pingLocalBridge, sendCommandToBridge, sendShutdownToBridge, cancelShutdownOnBridge, DEFAULT_BRIDGE_URL } from './utils/bridgeClient';
-import { CommandResult, BridgeStatus } from './types';
+import { CommandResult, BridgeStatus, AiConfig } from './types';
 
 // Web Speech Recognition Type Definition
 interface IWindow extends Window {
@@ -54,18 +55,58 @@ export default function App() {
   const [memoryModalOpen, setMemoryModalOpen] = useState<boolean>(false);
   const [knowledgeModalOpen, setKnowledgeModalOpen] = useState<boolean>(false);
   const [showLogs, setShowLogs] = useState<boolean>(false);
+  const [isAiConfigOpen, setIsAiConfigOpen] = useState<boolean>(false);
+
+  // Custom AI API Configuration (persisted locally)
+  const [aiConfig, setAiConfig] = useState<AiConfig>(() => {
+    try {
+      const saved = localStorage.getItem('praj_ai_config');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      provider: 'gemini',
+      apiKey: '',
+      baseUrl: 'https://generativelanguage.googleapis.com',
+      model: 'gemini-3.8-flash',
+    };
+  });
+
+  const handleSaveAiConfig = (newConfig: AiConfig) => {
+    setAiConfig(newConfig);
+    try {
+      localStorage.setItem('praj_ai_config', JSON.stringify(newConfig));
+    } catch (e) {
+      console.error('Failed to save praj_ai_config:', e);
+    }
+  };
 
   // Speech Recognition Ref
   const recognitionRef = useRef<any>(null);
+  const consecutiveFailuresRef = useRef<number>(0);
 
-  // 1. Initial System Check & Bridge Ping
+  // 1. Initial System Check & Bridge Ping (with flicker/flapping prevention)
   const checkBridge = useCallback(async (customUrl?: string) => {
     const targetUrl = customUrl || bridgeUrl;
     const status = await pingLocalBridge(targetUrl);
-    setBridgeStatus(status);
-    if (status.storedMemory) {
-      setStoredMemory(status.storedMemory);
-      localStorage.setItem('jarvis_memory', status.storedMemory);
+    
+    if (status.connected) {
+      consecutiveFailuresRef.current = 0;
+      setBridgeStatus(status);
+      if (status.storedMemory) {
+        setStoredMemory(status.storedMemory);
+        localStorage.setItem('jarvis_memory', status.storedMemory);
+      }
+    } else {
+      consecutiveFailuresRef.current += 1;
+      // Require 2 consecutive failed pings before marking as disconnected/standby
+      // This prevents momentary 1-cycle network jitter or speech engine pauses from dropping the status
+      if (consecutiveFailuresRef.current >= 2) {
+        setBridgeStatus(status);
+      }
     }
   }, [bridgeUrl]);
 
@@ -81,10 +122,10 @@ export default function App() {
     // Initial bridge check
     checkBridge();
 
-    // Auto-ping bridge every 5 seconds to maintain link
+    // Auto-ping bridge every 4 seconds to maintain link
     const interval = setInterval(() => {
       checkBridge();
-    }, 5000);
+    }, 4000);
 
     return () => clearInterval(interval);
   }, [checkBridge]);
@@ -215,8 +256,23 @@ export default function App() {
     let actionType: CommandResult['actionType'] = 'system_app';
     let systemExecuted = false;
 
+    // Check 0: Greetings, Farewells & Conversational Core
+    if (cmd === 'goodbye' || cmd === 'bye' || cmd.includes('see you later') || cmd === 'exit' || cmd === 'quit') {
+      actionType = 'system_control';
+      reply = "Goodbye, sir. PRAJ systems standing by at your command.";
+    } else if (cmd === 'hello' || cmd === 'hi' || cmd.startsWith('hey ') || cmd.includes('good morning') || cmd.includes('good evening') || cmd.includes('good afternoon')) {
+      actionType = 'system_control';
+      reply = "Hello, sir. PRAJ is online and ready for your commands.";
+    } else if (cmd.includes('who are you') || cmd.includes('what is your name') || cmd.includes('introduce yourself')) {
+      actionType = 'knowledge_base';
+      reply = "I am PRAJ, your Personal Responsive Automated Judicial assistant, capable of desktop system automation, offline knowledge lookup, and voice control.";
+    } else if (cmd.includes('what can you do') || cmd.includes('help me') || cmd.includes('list commands')) {
+      actionType = 'knowledge_base';
+      reply = "I can open local desktop apps like Chrome, Notepad, VLC, and Bluetooth; search Wikipedia; provide physics and GK facts; manage memory notes; and execute timed shutdown or cancel it with 'Arise'.";
+    }
+
     // Check 1: Cancel Shutdown / Arise
-    if (cmd.includes('arise') || cmd.includes('cancel shutdown')) {
+    else if (cmd.includes('arise') || cmd.includes('cancel shutdown')) {
       actionType = 'system_control';
       playChime('alert');
       if (bridgeStatus.connected) {
@@ -389,16 +445,26 @@ export default function App() {
         actionType = 'knowledge_base';
         reply = offlineAnswer;
       } else {
-        // Check 11: General AI Query via Gemini API Proxy
+        // Check 11: General AI Query via Universal AI Gateway (Gemini, OpenRouter, OpenAI, Custom)
         actionType = 'ai_chat';
         try {
           const res = await fetch('/api/ai/ask', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: rawCommand }),
+            body: JSON.stringify({
+              prompt: rawCommand,
+              provider: aiConfig.provider,
+              customApiKey: aiConfig.apiKey,
+              customBaseUrl: aiConfig.baseUrl,
+              customModel: aiConfig.model,
+            }),
           });
           const data = await res.json();
-          reply = data.reply || "I have received and processed your query, sir.";
+          if (!res.ok && data.error) {
+            reply = `API Notice: ${data.error}`;
+          } else {
+            reply = data.reply || "I have received and processed your query, sir.";
+          }
         } catch {
           reply = "I processed your request, sir.";
         }
@@ -468,7 +534,9 @@ export default function App() {
       <Header
         bridgeStatus={bridgeStatus}
         voiceMuted={voiceMuted}
-        hasGeminiKey={hasGeminiKey}
+        hasGeminiKey={Boolean(hasGeminiKey || aiConfig.apiKey)}
+        activeProvider={aiConfig.provider || (aiConfig.apiKey.startsWith('sk-or-') ? 'openrouter' : aiConfig.apiKey.startsWith('sk-') ? 'openai' : 'gemini')}
+        activeModel={aiConfig.model}
         onToggleMute={() => {
           if (!voiceMuted) stopSpeaking();
           setVoiceMuted(!voiceMuted);
@@ -477,11 +545,12 @@ export default function App() {
         onOpenMemoryModal={() => setMemoryModalOpen(true)}
         onOpenKnowledgeModal={() => setKnowledgeModalOpen(true)}
         onToggleLogs={() => setShowLogs(!showLogs)}
+        onOpenAiConfig={() => setIsAiConfigOpen(true)}
         showLogs={showLogs}
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 w-full max-w-5xl mx-auto px-4 py-6 md:py-8 flex flex-col gap-6">
+      <main className="flex-1 w-full max-w-5xl mx-auto px-4 py-6 md:py-8 pb-28 flex flex-col gap-6">
         {/* Core Audio Visualizer & Voice Arc Reactor */}
         <section aria-label="PRAJ Voice Core">
           <VoiceVisualizer
@@ -554,6 +623,15 @@ export default function App() {
         isOpen={knowledgeModalOpen}
         onClose={() => setKnowledgeModalOpen(false)}
         onSelectQuestion={(q) => executeCommand(q, 'typing')}
+      />
+
+      {/* Bottom Sticky / Corner API Key, URL and Model Gateway Bar */}
+      <AiConfigBar
+        config={aiConfig}
+        onSaveConfig={handleSaveAiConfig}
+        hasServerKey={hasGeminiKey}
+        isOpen={isAiConfigOpen}
+        onToggleOpen={() => setIsAiConfigOpen(!isAiConfigOpen)}
       />
     </div>
   );
