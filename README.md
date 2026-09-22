@@ -197,3 +197,9 @@ npm run build
 npm start
 ```
 This builds the client assets with Vite and compiles the custom Express server with `esbuild` into `dist/server.cjs`.
+                               or
+   for deployment:  npm.cmd run dev  
+   for starting the bridge  :   python praj_desktop_bridge.py
+
+   Make sure both the files are in the same folder and the powershell is running in that folder only
+   
