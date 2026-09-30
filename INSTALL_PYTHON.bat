@@ -1,112 +1,132 @@
 @echo off
-title PRAJ SYSTEM - 1-CLICK PYTHON AUTO-INSTALLER
-color 0A
-cls
-echo =====================================================================
-echo           PRAJ AI - 1-CLICK PYTHON INSTALLER FOR WINDOWS
-echo =====================================================================
+setlocal DisableDelayedExpansion
+title PRAJ - Python Setup
+set "PRAJ_SETUP_FILE=%~f0"
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $source=[IO.File]::ReadAllText($env:PRAJ_SETUP_FILE); $body=($source -split '(?m)^# PRAJ_POWERSHELL_START\r?$',2)[1]; & ([scriptblock]::Create($body)) } catch { Write-Host ('[ERROR] '+$_.Exception.Message); exit 1 }"
+set "PRAJ_SETUP_RESULT=%ERRORLEVEL%"
+if "%PRAJ_SETUP_RESULT%"=="0" exit /b 0
 echo.
-
-:: 1. Check if python is already working
-python --version >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [FOUND] Python is already installed on this computer!
-    python --version
-    echo.
-    echo [*] Checking pip package manager...
-    python -m pip --version >nul 2>&1
-    if %errorlevel% neq 0 (
-        echo [*] Installing pip...
-        python -m ensurepip --default-pip
-    )
-    echo [*] Installing required PRAJ libraries (flask, flask-cors, psutil, pywin32)...
-    python -m pip install flask flask-cors psutil pywin32 --quiet --disable-pip-version-check
-    echo.
-    echo =====================================================================
-    echo   [SUCCESS] Python is ready and configured with all PRAJ dependencies!
-    echo =====================================================================
-    echo.
-    pause
-    exit /b 0
-)
-
-:: 2. Check if py launcher is installed
-py -3 --version >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [FOUND] Python launcher (py) is installed on this computer!
-    py -3 --version
-    echo.
-    echo [*] Installing required PRAJ libraries using py launcher...
-    py -3 -m pip install flask flask-cors psutil pywin32 --quiet --disable-pip-version-check
-    echo.
-    echo =====================================================================
-    echo   [SUCCESS] Python is ready and configured with all PRAJ dependencies!
-    echo =====================================================================
-    echo.
-    pause
-    exit /b 0
-)
-
-:: 3. Check AppData default path
-if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
-    set "PATH=%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%PATH%"
-    echo [FOUND] Python is located in %LOCALAPPDATA%\Programs\Python\Python311!
-    python --version
-    python -m pip install flask flask-cors psutil pywin32 --quiet --disable-pip-version-check
-    echo.
-    echo =====================================================================
-    echo   [SUCCESS] Python is ready!
-    echo =====================================================================
-    pause
-    exit /b 0
-)
-
-echo [!] Python is NOT installed on this computer.
-echo [*] Downloading official Python 3.11 for Windows...
-echo.
-
-set "PY_INSTALLER=%TEMP%\praj_python_installer.exe"
-set "PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('%PY_URL%', '%PY_INSTALLER%')"
-
-if not exist "%PY_INSTALLER%" (
-    echo [!] Direct download was blocked.
-    echo [*] Trying winget...
-    winget install --id Python.Python.3.11 -e --source winget --accept-source-agreements --accept-package-agreements
-    goto FINISH
-)
-
-echo [*] Installing Python silently with PATH and pip enabled...
-"%PY_INSTALLER%" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_test=0 Include_launcher=1
-
-echo [*] Waiting for installer to finalize...
-timeout /t 5 /nobreak >nul
-
-if exist "%PY_INSTALLER%" del /f /q "%PY_INSTALLER%" >nul 2>&1
-
-:FINISH
-set "PATH=%LOCALAPPDATA%\Programs\Python\Python311;%LOCALAPPDATA%\Programs\Python\Python311\Scripts;%PATH%"
-
-python --version >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [SUCCESS] Python successfully installed!
-    python --version
-    echo.
-    echo [*] Installing PRAJ libraries (flask, flask-cors, psutil, pywin32)...
-    python -m pip install flask flask-cors psutil pywin32 --quiet --disable-pip-version-check
-    echo.
-    echo =====================================================================
-    echo    [COMPLETED] 1-Click Python Setup is Finished!
-    echo =====================================================================
-) else (
-    echo.
-    echo =====================================================================
-    echo    [DONE] Python installer has finished!
-    echo    Please restart this Command Prompt window so Windows refreshes PATH.
-    echo =====================================================================
-)
-
-echo.
+echo Setup failed. Review the error above and the log path, then try again.
 pause
-exit /b 0
+exit /b %PRAJ_SETUP_RESULT%
+# PRAJ_POWERSHELL_START
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+
+function Test-Python([string]$Executable, [string[]]$Prefix = @()) {
+    try {
+        # Execute code: --version alone can mistake Store aliases for Python.
+        $result = & $Executable @Prefix -c 'import sys; assert sys.version_info >= (3, 9); print(sys.executable)' 2>$null
+        if ($LASTEXITCODE -eq 0 -and $result) {
+            $resolved = ([string]($result | Select-Object -Last 1)).Trim()
+            if (Test-Path -LiteralPath $resolved -PathType Leaf) { return $resolved }
+        }
+    } catch {}
+    return $null
+}
+
+function Find-Python {
+    $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
+    if ($launcher) {
+        $found = Test-Python $launcher.Source @('-3')
+        if ($found) { return $found }
+    }
+    foreach ($command in @(Get-Command python.exe -All -ErrorAction SilentlyContinue)) {
+        # Skip the Windows Store stub, which can open the Store instead of running.
+        if ($command.Source -notlike '*\Microsoft\WindowsApps\*') {
+            $found = Test-Python $command.Source
+            if ($found) { return $found }
+        }
+    }
+    $programFiles32 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    $patterns = @(
+        "$env:LOCALAPPDATA\Programs\Python\Python*\python.exe",
+        "$env:ProgramFiles\Python*\python.exe",
+        "$programFiles32\Python*\python.exe"
+    )
+    foreach ($candidate in @(Get-ChildItem -Path $patterns -ErrorAction SilentlyContinue | Sort-Object FullName -Descending)) {
+        $found = Test-Python $candidate.FullName
+        if ($found) { return $found }
+    }
+    foreach ($key in @(Get-Item -Path 'HKCU:\Software\Python\PythonCore\*\InstallPath',
+        'HKLM:\Software\Python\PythonCore\*\InstallPath',
+        'HKLM:\Software\WOW6432Node\Python\PythonCore\*\InstallPath' -ErrorAction SilentlyContinue)) {
+        $directory = $key.GetValue('')
+        if ($directory) {
+            $found = Test-Python (Join-Path $directory 'python.exe')
+            if ($found) { return $found }
+        }
+    }
+    return $null
+}
+
+$logDirectory = Join-Path ([IO.Path]::GetTempPath()) ('PRAJ-setup-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $logDirectory | Out-Null
+$transcribing = $false
+try {
+    Start-Transcript -Path (Join-Path $logDirectory 'setup.log') | Out-Null
+    $transcribing = $true
+    Write-Host 'Checking for Python 3.9 or newer...'
+    $python = Find-Python
+    if (-not $python) {
+        $version = '3.13.15'
+        $architecture = $env:PROCESSOR_ARCHITEW6432
+        if (-not $architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE }
+        switch ($architecture.ToUpperInvariant()) {
+            'ARM64' { $suffix = '-arm64' }
+            'AMD64' { $suffix = '-amd64' }
+            'X86'   { $suffix = '' }
+            default { throw "Unsupported Windows architecture: $architecture" }
+        }
+        $url = "https://www.python.org/ftp/python/$version/python-$version$suffix.exe"
+        $installer = Join-Path $logDirectory 'python-setup.exe'
+        Write-Host "Python was not found. Downloading Python $version for $architecture..."
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $installer -TimeoutSec 300
+        $signature = Get-AuthenticodeSignature -LiteralPath $installer
+        if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'O=Python Software Foundation(?:,|$)') {
+            throw 'The download does not have a valid Python Software Foundation signature.'
+        }
+        $target = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313'
+        $installerLog = Join-Path $logDirectory 'python-install.log'
+        Write-Host 'Installing Python for your Windows user. This may take a few minutes...'
+        $arguments = @('/quiet', 'InstallAllUsers=0', 'PrependPath=1',
+            'Include_pip=1', 'Include_test=0', 'Include_launcher=1',
+            'InstallLauncherAllUsers=0', 'Shortcuts=0',
+            ('TargetDir="' + $target + '"'), '/log', ('"' + $installerLog + '"'))
+        $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
+        if ($process.ExitCode -notin @(0, 3010)) {
+            throw "Python installer exited with code $($process.ExitCode). See $installerLog"
+        }
+        $python = Test-Python (Join-Path $target 'python.exe')
+        if (-not $python) {
+            $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+            $python = Find-Python
+        }
+        if (-not $python) { throw 'Setup finished, but Python could not run. Check the installer log; a Windows restart may be required.' }
+        if ($process.ExitCode -eq 3010) { Write-Host 'Windows reports that a restart is required to finish installation.' }
+    }
+    Write-Host "Using Python: $python"
+    & $python --version
+    if ($LASTEXITCODE -ne 0) { throw 'Python verification failed.' }
+    & $python -m pip --version
+    if ($LASTEXITCODE -ne 0) {
+        & $python -m ensurepip --upgrade
+        if ($LASTEXITCODE -ne 0) { throw 'Could not set up pip.' }
+    }
+    Write-Host 'Installing PRAJ libraries...'
+    & $python -m pip install --disable-pip-version-check flask flask-cors psutil pywin32
+    if ($LASTEXITCODE -ne 0) { throw 'PRAJ library installation failed. Check the pip error above.' }
+    & $python -c 'import flask, flask_cors, psutil, win32api'
+    if ($LASTEXITCODE -ne 0) { throw 'PRAJ library verification failed.' }
+    Write-Host '[READY] Python and PRAJ libraries are installed.'
+    Write-Host 'Open PRAJ from a new window so it picks up any PATH changes.'
+    Write-Host "Setup logs: $logDirectory"
+} catch {
+    Write-Host ("[ERROR] " + $_.Exception.Message) -ForegroundColor Red
+    Write-Host "Setup logs: $logDirectory"
+    if ($transcribing) { Stop-Transcript | Out-Null }
+    exit 1
+}
+if ($transcribing) { Stop-Transcript | Out-Null }
+exit 0
