@@ -1,4 +1,4 @@
-import { Shield, ShieldAlert, Volume2, VolumeX, Cpu, Database, BookOpen, Terminal, Download, Sparkles } from 'lucide-react';
+import { Shield, ShieldAlert, Volume2, VolumeX, Cpu, Database, BookOpen, Terminal, Download, Sparkles, Zap, Power, Sliders, UserCheck } from 'lucide-react';
 import { BridgeStatus } from '../types';
 
 interface HeaderProps {
@@ -13,6 +13,11 @@ interface HeaderProps {
   onOpenKnowledgeModal: () => void;
   onToggleLogs: () => void;
   onOpenAiConfig?: () => void;
+  onOpenMasterSwitch?: () => void;
+  onTriggerKillSwitch?: () => void;
+  isKillSwitchActive?: boolean;
+  onOpenVoiceSettings?: () => void;
+  onOpenPersonalization?: () => void;
   showLogs: boolean;
 }
 
@@ -28,6 +33,11 @@ export function Header({
   onOpenKnowledgeModal,
   onToggleLogs,
   onOpenAiConfig,
+  onOpenMasterSwitch,
+  onTriggerKillSwitch,
+  isKillSwitchActive = false,
+  onOpenVoiceSettings,
+  onOpenPersonalization,
   showLogs,
 }: HeaderProps) {
   return (
@@ -54,24 +64,75 @@ export function Header({
           </div>
         </div>
 
-        {/* Mobile quick bridge status */}
-        <button
-          onClick={onOpenBridgeModal}
-          className="md:hidden flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-slate-800/70 border-slate-700"
-        >
-          <span
-            className={`w-2 h-2 rounded-full ${
-              bridgeStatus.connected ? 'bg-emerald-400' : 'bg-amber-400'
-            }`}
-          />
-          <span className="text-slate-300">
-            {bridgeStatus.connected ? 'PC Linked' : 'Bridge'}
-          </span>
-        </button>
+        {/* Mobile quick actions: Master Switch & Bridge status */}
+        <div className="md:hidden flex items-center gap-2">
+          {onOpenMasterSwitch && (
+            <button
+              onClick={onOpenMasterSwitch}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40"
+              title="1-Click Master Switch"
+            >
+              <Zap className="w-3.5 h-3.5 fill-cyan-300" />
+              <span>Switch</span>
+            </button>
+          )}
+          {onTriggerKillSwitch && (
+            <button
+              onClick={onTriggerKillSwitch}
+              className="p-1.5 rounded-lg text-xs font-semibold bg-red-600/30 text-red-300 border border-red-500/50"
+              title="1-Click Kill Switch"
+            >
+              <Power className="w-3.5 h-3.5" />
+            </button>
+          )}
+          <button
+            onClick={onOpenBridgeModal}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border bg-slate-800/70 border-slate-700"
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                bridgeStatus.connected ? 'bg-emerald-400' : 'bg-amber-400'
+              }`}
+            />
+            <span className="text-slate-300">
+              {bridgeStatus.connected ? 'PC Linked' : 'Bridge'}
+            </span>
+          </button>
+        </div>
       </div>
 
       {/* Center/Right Control Cluster */}
       <div className="flex flex-wrap items-center justify-center md:justify-end gap-2 w-full md:w-auto">
+        {/* 1-Click Master Switch Button (Starts both programs & controls) */}
+        {onOpenMasterSwitch && (
+          <button
+            id="btn-master-switch"
+            onClick={onOpenMasterSwitch}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wide bg-gradient-to-r from-cyan-950/60 to-blue-950/60 hover:from-cyan-900/60 hover:to-blue-900/60 border border-cyan-500/50 text-cyan-300 shadow-[0_0_12px_rgba(6,182,212,0.25)] transition-all cursor-pointer"
+            title="1-Click Master Switch: Launch Python Desktop Bridge & Web UI or download 1-click batch files"
+          >
+            <Zap className="w-3.5 h-3.5 fill-cyan-400 text-cyan-400 animate-pulse" />
+            <span>Master Switch</span>
+          </button>
+        )}
+
+        {/* 1-Click Emergency Kill Switch Button */}
+        {onTriggerKillSwitch && (
+          <button
+            id="btn-kill-switch"
+            onClick={onTriggerKillSwitch}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold font-mono tracking-wide border transition-all cursor-pointer ${
+              isKillSwitchActive
+                ? 'bg-red-600 text-white border-red-400 shadow-[0_0_18px_rgba(239,68,68,0.6)] animate-pulse'
+                : 'bg-red-950/50 hover:bg-red-900/60 border-red-500/60 text-red-300 shadow-[0_0_12px_rgba(239,68,68,0.25)]'
+            }`}
+            title="Emergency Kill Switch: 1-click instant halt of all tasks, speech, and pending host shutdowns"
+          >
+            <Power className="w-3.5 h-3.5" />
+            <span>Kill Switch</span>
+          </button>
+        )}
+
         {/* Desktop Bridge Status Pill */}
         <button
           id="btn-bridge-status-pill"
@@ -152,6 +213,32 @@ export function Header({
           <span className="hidden sm:inline">Terminal</span>
         </button>
 
+        {/* Voice Customization Settings */}
+        {onOpenVoiceSettings && (
+          <button
+            id="btn-voice-settings"
+            onClick={onOpenVoiceSettings}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800/80 hover:bg-slate-700/80 text-cyan-300 border border-slate-700/80 transition-colors cursor-pointer"
+            title="PRAJ Voice Customization: Choose your favorite audio voice or keep default"
+          >
+            <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Voice</span>
+          </button>
+        )}
+
+        {/* User Personalization & Persona Settings */}
+        {onOpenPersonalization && (
+          <button
+            id="btn-personalization-settings"
+            onClick={onOpenPersonalization}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-slate-800/80 hover:bg-slate-700/80 text-cyan-300 border border-slate-700/80 transition-colors cursor-pointer"
+            title="Personalization Profile: Custom Honorific, Persona, Interests & Tone"
+          >
+            <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Profile</span>
+          </button>
+        )}
+
         {/* Voice Mute Toggle */}
         <button
           id="btn-toggle-speech-mute"
@@ -161,7 +248,7 @@ export function Header({
               ? 'bg-rose-950/30 border-rose-500/40 text-rose-300 hover:bg-rose-900/40'
               : 'bg-slate-800/80 hover:bg-slate-700/80 text-cyan-300 border-slate-700/80'
           }`}
-          title={voiceMuted ? 'Jarvis voice muted. Click to unmute.' : 'Jarvis voice active. Click to mute.'}
+          title={voiceMuted ? 'PRAJ voice muted. Click to unmute.' : 'PRAJ voice active. Click to mute.'}
           aria-label={voiceMuted ? 'Unmute voice' : 'Mute voice'}
         >
           {voiceMuted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}

@@ -10,6 +10,7 @@ export interface CommandResult {
   bridgeConnected: boolean;
   latencyMs?: number;
   rawDetails?: string;
+  imageUrl?: string;
 }
 
 export interface BridgeStatus {
@@ -58,5 +59,17 @@ export interface AiConfig {
   apiKey: string;
   baseUrl: string;
   model: string;
+}
+
+export type AssistantPersona = 'jarvis' | 'companion' | 'concise' | 'cyberpunk' | 'formal';
+
+export interface UserPersonalization {
+  userName: string;
+  userTitle: string; // e.g. 'Sir', 'Boss', 'Captain', 'Master', or custom/none
+  userRole: string; // e.g. 'Developer & Researcher'
+  persona: AssistantPersona;
+  customToneInstructions: string;
+  favoriteTopics: string[]; // e.g. ['AI', 'Robotics', 'Space', 'Coding']
+  autoAcknowledgeWithName: boolean;
 }
 

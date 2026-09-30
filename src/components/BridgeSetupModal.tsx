@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { X, Download, Copy, Check, ShieldCheck, RefreshCw, Terminal, Laptop, HelpCircle } from 'lucide-react';
+import { X, Download, Copy, Check, ShieldCheck, RefreshCw, Terminal, Laptop, HelpCircle, Zap, Power, Code2 } from 'lucide-react';
 import { BridgeStatus } from '../types';
 import { PYTHON_BRIDGE_SCRIPT } from '../data/pythonBridgeScript';
+import { START_PRAJ_BAT, KILL_PRAJ_BAT, INSTALL_PYTHON_BAT, downloadScriptFile } from '../data/batchScripts';
 
 interface BridgeSetupModalProps {
   isOpen: boolean;
@@ -10,6 +11,7 @@ interface BridgeSetupModalProps {
   onCheckBridge: (customUrl?: string) => Promise<void>;
   bridgeUrl: string;
   setBridgeUrl: (url: string) => void;
+  onOpenMasterSwitch?: () => void;
 }
 
 export function BridgeSetupModal({
@@ -19,6 +21,7 @@ export function BridgeSetupModal({
   onCheckBridge,
   bridgeUrl,
   setBridgeUrl,
+  onOpenMasterSwitch,
 }: BridgeSetupModalProps) {
   const [copied, setCopied] = useState(false);
   const [testingPing, setTestingPing] = useState(false);
@@ -172,6 +175,60 @@ export function BridgeSetupModal({
                 </div>
               </li>
             </ol>
+          </div>
+
+          {/* 1-Click Launcher & Kill Switch Windows Automation */}
+          <div className="p-4 bg-gradient-to-r from-cyan-950/40 via-slate-950/60 to-red-950/40 border border-slate-700/80 rounded-xl space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-cyan-400" />
+                <h4 className="text-xs font-bold text-slate-200 uppercase font-mono tracking-wider">
+                  1-Click Windows Master Launch & Kill Switch
+                </h4>
+              </div>
+              <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
+                Recommended
+              </span>
+            </div>
+            <p className="text-xs text-slate-300">
+              Skip typing terminal commands manually. Double-click <code className="text-cyan-300 font-mono">START_PRAJ.bat</code> to launch both programs at once, or <code className="text-red-300 font-mono">KILL_PRAJ.bat</code> for an emergency stop.
+            </p>
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <button
+                onClick={() => downloadScriptFile('START_PRAJ.bat', START_PRAJ_BAT)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium font-mono shadow-md transition-colors"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>START_PRAJ.bat</span>
+              </button>
+              <button
+                onClick={() => downloadScriptFile('INSTALL_PYTHON.bat', INSTALL_PYTHON_BAT)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-lg text-xs font-medium font-mono shadow-md transition-colors"
+                title="Download 1-Click Python Setup for Windows"
+              >
+                <Code2 className="w-3.5 h-3.5" />
+                <span>INSTALL_PYTHON.bat</span>
+              </button>
+              <button
+                onClick={() => downloadScriptFile('KILL_PRAJ.bat', KILL_PRAJ_BAT)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-medium font-mono shadow-md transition-colors"
+              >
+                <Power className="w-3.5 h-3.5" />
+                <span>KILL_PRAJ.bat</span>
+              </button>
+              {onOpenMasterSwitch && (
+                <button
+                  onClick={() => {
+                    onClose();
+                    onOpenMasterSwitch();
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/30 rounded-lg text-xs font-medium font-mono transition-colors"
+                >
+                  <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Open Master Console</span>
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Config URL */}

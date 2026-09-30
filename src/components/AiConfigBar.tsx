@@ -46,13 +46,16 @@ const PROVIDERS: Record<AiProvider, ProviderMeta> = {
     badge: 'OpenRouter (100+ Models)',
     defaultBaseUrl: 'https://openrouter.ai/api/v1',
     keyPlaceholder: 'sk-or-v1-... (OpenRouter key)',
-    defaultModel: 'deepseek/deepseek-r1',
+    defaultModel: 'deepseek/deepseek-r1:free',
     models: [
-      { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1 (Reasoning)' },
-      { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
-      { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
+      { id: 'deepseek/deepseek-r1:free', label: 'DeepSeek R1 (100% Free - :free)' },
+      { id: 'deepseek/deepseek-chat:free', label: 'DeepSeek V3 (100% Free - :free)' },
+      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (100% Free - :free)' },
+      { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (100% Free - :free)' },
+      { id: 'qwen/qwen-2.5-coder-32b-instruct:free', label: 'Qwen 2.5 Coder 32B (100% Free - :free)' },
       { id: 'openai/gpt-4o-mini', label: 'GPT-4o Mini' },
-      { id: 'google/gemini-2.0-flash-001', label: 'Gemini 2.0 Flash' },
+      { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1 (Paid)' },
+      { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
     ],
     keyHelpUrl: 'https://openrouter.ai/keys',
     keyHelpLabel: 'Get OpenRouter Key',
@@ -130,42 +133,84 @@ export function AiConfigBar({ config, onSaveConfig, hasServerKey, isOpen: contro
     const meta = PROVIDERS[newProvider];
     // If URL is default for another provider or empty, switch to this provider's default URL
     const isCurrentUrlDefault = Object.values(PROVIDERS).some((p) => p.defaultBaseUrl === baseUrl) || !baseUrl;
+    const targetUrl = isCurrentUrlDefault ? meta.defaultBaseUrl : baseUrl;
     if (isCurrentUrlDefault) {
       setBaseUrl(meta.defaultBaseUrl);
     }
     // Switch model to default of this provider if currently on another provider's default
     const isCurrentModelAnotherDefault = Object.values(PROVIDERS).some((p) => p.defaultModel === model);
+    const targetModel = (isCurrentModelAnotherDefault || !model) ? meta.defaultModel : model;
     if (isCurrentModelAnotherDefault || !model) {
       setModel(meta.defaultModel);
     }
     setTestResult(null);
-  };
 
-  // Auto-detect provider when typing or pasting API key
-  const handleApiKeyChange = (val: string) => {
-    setApiKey(val);
-    const trimmed = val.trim();
-    if (trimmed.startsWith('sk-or-v1-') && provider !== 'openrouter') {
-      handleSelectProvider('openrouter');
-    } else if (trimmed.startsWith('sk-') && !trimmed.startsWith('sk-or-') && provider !== 'openai') {
-      handleSelectProvider('openai');
-    } else if (trimmed.startsWith('AIzaSy') && provider !== 'gemini') {
-      handleSelectProvider('gemini');
-    } else if (trimmed.startsWith('gsk_') && provider !== 'custom_openai') {
-      handleSelectProvider('custom_openai');
+    if (apiKey.trim()) {
+      onSaveConfig({
+        provider: newProvider,
+        apiKey: apiKey.trim(),
+        baseUrl: targetUrl,
+        model: targetModel,
+      });
     }
   };
 
-  const handleSave = () => {
+  const handleSelectModel = (newModel: string) => {
+    setModel(newModel);
+    if (apiKey.trim()) {
+      onSaveConfig({
+        provider,
+        apiKey: apiKey.trim(),
+        baseUrl: baseUrl.trim() || activeProviderMeta.defaultBaseUrl,
+        model: newModel,
+      });
+    }
+  };
+
+  const isUnsaved =
+    apiKey.trim() !== (config.apiKey || '').trim() ||
+    provider !== config.provider ||
+    baseUrl.trim() !== (config.baseUrl || '').trim() ||
+    model.trim() !== (config.model || '').trim();
+
+  const handleSave = (override?: Partial<AiConfig>) => {
     const updated: AiConfig = {
-      provider,
-      apiKey: apiKey.trim(),
-      baseUrl: baseUrl.trim() || activeProviderMeta.defaultBaseUrl,
-      model: model.trim() || activeProviderMeta.defaultModel,
+      provider: override?.provider || provider,
+      apiKey: (override?.apiKey !== undefined ? override.apiKey : apiKey).trim(),
+      baseUrl: (override?.baseUrl !== undefined ? override.baseUrl : baseUrl).trim() || activeProviderMeta.defaultBaseUrl,
+      model: (override?.model !== undefined ? override.model : model).trim() || activeProviderMeta.defaultModel,
     };
     onSaveConfig(updated);
     setJustSaved(true);
-    setTimeout(() => setJustSaved(false), 2500);
+    setTimeout(() => setJustSaved(false), 2000);
+  };
+
+  // Auto-detect provider when typing or pasting API key & auto-save to parent
+  const handleApiKeyChange = (val: string) => {
+    setApiKey(val);
+    let detectedProvider = provider;
+    const trimmed = val.trim();
+    if (trimmed.startsWith('sk-or-v1-') && provider !== 'openrouter') {
+      detectedProvider = 'openrouter';
+      handleSelectProvider('openrouter');
+    } else if (trimmed.startsWith('sk-') && !trimmed.startsWith('sk-or-') && provider !== 'openai') {
+      detectedProvider = 'openai';
+      handleSelectProvider('openai');
+    } else if (trimmed.startsWith('AIzaSy') && provider !== 'gemini') {
+      detectedProvider = 'gemini';
+      handleSelectProvider('gemini');
+    } else if (trimmed.startsWith('gsk_') && provider !== 'custom_openai') {
+      detectedProvider = 'custom_openai';
+      handleSelectProvider('custom_openai');
+    }
+
+    // Auto-save so the voice assistant can immediately use it without requiring extra clicks
+    onSaveConfig({
+      provider: detectedProvider,
+      apiKey: trimmed,
+      baseUrl: baseUrl.trim() || PROVIDERS[detectedProvider].defaultBaseUrl,
+      model: model.trim() || PROVIDERS[detectedProvider].defaultModel,
+    });
   };
 
   const handleTestConnection = async () => {
@@ -184,9 +229,20 @@ export function AiConfigBar({ config, onSaveConfig, hasServerKey, isOpen: contro
       });
       const data = await res.json();
       if (res.ok && data.success) {
+        // Automatically save active config to browser memory on successful verification
+        const verifiedConfig: AiConfig = {
+          provider,
+          apiKey: apiKey.trim(),
+          baseUrl: baseUrl.trim() || activeProviderMeta.defaultBaseUrl,
+          model: model.trim() || activeProviderMeta.defaultModel,
+        };
+        onSaveConfig(verifiedConfig);
+        setJustSaved(true);
+        setTimeout(() => setJustSaved(false), 3500);
+
         setTestResult({
           success: true,
-          message: `Verified! Response from ${data.provider || provider} (${data.model}): "${data.testResponse}"`,
+          message: `Verified & Auto-Saved! Connected to ${data.provider || provider} (${data.model}): "${data.testResponse}". PRAJ is ready for voice queries!`,
         });
       } else {
         setTestResult({
@@ -390,7 +446,7 @@ export function AiConfigBar({ config, onSaveConfig, hasServerKey, isOpen: contro
                 <button
                   key={m.id}
                   type="button"
-                  onClick={() => setModel(m.id)}
+                  onClick={() => handleSelectModel(m.id)}
                   className={`px-2 py-1 rounded text-[11px] font-mono border transition-colors ${
                     model === m.id
                       ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
@@ -473,23 +529,23 @@ export function AiConfigBar({ config, onSaveConfig, hasServerKey, isOpen: contro
               </div>
 
               <div className="flex items-center gap-2">
+                {apiKey.trim() && !isUnsaved && (
+                  <span className="hidden sm:inline-block text-[11px] text-emerald-400 font-mono">
+                    ● Saved in browser
+                  </span>
+                )}
                 <button
                   id="btn-save-api-config"
                   type="button"
-                  onClick={handleSave}
-                  className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 shadow-md shadow-cyan-500/20 transition-all"
+                  onClick={() => handleSave()}
+                  className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    isUnsaved
+                      ? 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 shadow-md shadow-cyan-500/20 animate-pulse'
+                      : 'bg-emerald-950/70 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-900/60'
+                  }`}
                 >
-                  {justSaved ? (
-                    <>
-                      <Check className="w-3.5 h-3.5 text-slate-950" />
-                      Saved & Active!
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 text-slate-950" />
-                      Apply & Save
-                    </>
-                  )}
+                  <Check className="w-3.5 h-3.5" />
+                  {isUnsaved ? 'Apply & Save Changes' : justSaved ? 'Saved & Active!' : 'Active & Saved'}
                 </button>
               </div>
             </div>

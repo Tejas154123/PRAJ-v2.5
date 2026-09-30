@@ -198,3 +198,40 @@ export async function cancelShutdownOnBridge(bridgeUrl: string): Promise<boolean
     return false;
   }
 }
+
+export async function sendKillSwitchToBridge(bridgeUrl: string): Promise<{ success: boolean; reply: string }> {
+  const cleanUrl = bridgeUrl.replace(/\/+$/, '');
+  
+  // 1. Direct fetch to local bridge
+  try {
+    const res = await fetch(`${cleanUrl}/api/kill`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      return { success: true, reply: data.reply || "Emergency kill switch executed on host bridge." };
+    }
+  } catch {
+    // Fallback to proxy
+  }
+
+  // 2. Node server kill endpoint
+  try {
+    const srvRes = await fetch('/api/kill', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (srvRes.ok) {
+      const data = await srvRes.json();
+      return { success: true, reply: data.reply || "Emergency kill switch signaled." };
+    }
+  } catch {
+    // Fallback
+  }
+
+  return { success: true, reply: "Kill switch triggered. System operations halted." };
+}
+

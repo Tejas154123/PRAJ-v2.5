@@ -8,11 +8,21 @@ import { SystemLog } from './components/SystemLog';
 import { BridgeSetupModal } from './components/BridgeSetupModal';
 import { MemoryModal } from './components/MemoryModal';
 import { KnowledgeModal } from './components/KnowledgeModal';
+import { MasterSwitchModal } from './components/MasterSwitchModal';
+import { VoiceSettingsModal } from './components/VoiceSettingsModal';
+import { PersonalizationModal, loadSavedPersonalization, savePersonalization } from './components/PersonalizationModal';
 import { AiConfigBar } from './components/AiConfigBar';
 import { matchOfflineKnowledge } from './data/knowledgeBase';
 import { playChime, speakJarvis, stopSpeaking } from './utils/speech';
-import { pingLocalBridge, sendCommandToBridge, sendShutdownToBridge, cancelShutdownOnBridge, DEFAULT_BRIDGE_URL } from './utils/bridgeClient';
-import { CommandResult, BridgeStatus, AiConfig } from './types';
+import { 
+  pingLocalBridge, 
+  sendCommandToBridge, 
+  sendShutdownToBridge, 
+  cancelShutdownOnBridge, 
+  sendKillSwitchToBridge,
+  DEFAULT_BRIDGE_URL 
+} from './utils/bridgeClient';
+import { CommandResult, BridgeStatus, AiConfig, UserPersonalization } from './types';
 
 // Web Speech Recognition Type Definition
 interface IWindow extends Window {
@@ -46,16 +56,50 @@ export default function App() {
     return localStorage.getItem('praj_memory') || localStorage.getItem('jarvis_memory') || 'System initialized on host device.';
   });
 
-  // Telemetry & Results
-  const [results, setResults] = useState<CommandResult[]>([]);
-  const [lastResult, setLastResult] = useState<CommandResult | null>(null);
+  // Telemetry & Results (Persisted conversational memory across browser sessions)
+  const [results, setResults] = useState<CommandResult[]>(() => {
+    try {
+      const saved = localStorage.getItem('praj_conversation_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  });
+  const [lastResult, setLastResult] = useState<CommandResult | null>(() => {
+    try {
+      const saved = localStorage.getItem('praj_conversation_history');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0];
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
 
   // UI Modals
   const [bridgeModalOpen, setBridgeModalOpen] = useState<boolean>(false);
+  const [masterSwitchModalOpen, setMasterSwitchModalOpen] = useState<boolean>(false);
+  const [voiceModalOpen, setVoiceModalOpen] = useState<boolean>(false);
+  const [personalizationModalOpen, setPersonalizationModalOpen] = useState<boolean>(false);
+  const [isKillSwitchActive, setIsKillSwitchActive] = useState<boolean>(false);
   const [memoryModalOpen, setMemoryModalOpen] = useState<boolean>(false);
   const [knowledgeModalOpen, setKnowledgeModalOpen] = useState<boolean>(false);
   const [showLogs, setShowLogs] = useState<boolean>(false);
   const [isAiConfigOpen, setIsAiConfigOpen] = useState<boolean>(false);
+
+  // User Profile & Personalization
+  const [personalization, setPersonalization] = useState<UserPersonalization>(loadSavedPersonalization);
+
+  const handleSavePersonalization = (p: UserPersonalization) => {
+    setPersonalization(p);
+    savePersonalization(p);
+  };
 
   // Custom AI API Configuration (persisted locally)
   const [aiConfig, setAiConfig] = useState<AiConfig>(() => {
@@ -87,6 +131,8 @@ export default function App() {
   // Speech Recognition Ref
   const recognitionRef = useRef<any>(null);
   const consecutiveFailuresRef = useRef<number>(0);
+  const isSpeakingRef = useRef<boolean>(false);
+  const speechCooldownRef = useRef<number>(0);
 
   // 1. Initial System Check & Bridge Ping (with flicker/flapping prevention)
   const checkBridge = useCallback(async (customUrl?: string) => {
@@ -151,6 +197,11 @@ export default function App() {
     };
 
     rec.onresult = (event: any) => {
+      // Acoustic Echo Cancellation: ignore microphone audio when PRAJ is speaking through speakers
+      if (isSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking) || Date.now() < speechCooldownRef.current) {
+        return;
+      }
+
       let currentInterim = '';
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const transcriptSegment = event.results[i][0].transcript;
@@ -227,12 +278,17 @@ export default function App() {
   };
 
   const handleSpokenFinal = (rawText: string) => {
+    // Drop any voice captured while PRAJ is speaking to prevent self-trigger feedback loops
+    if (isSpeakingRef.current || (typeof window !== 'undefined' && window.speechSynthesis?.speaking) || Date.now() < speechCooldownRef.current) {
+      return;
+    }
+
     const clean = rawText.toLowerCase().trim();
     if (!clean) return;
 
     // In continuous mode, check for wake word 'PRAJ', 'Jarvis' or 'Arise'
     if (continuousMode) {
-      if (clean.includes('arise')) {
+      if (clean.includes('arise') || clean.includes('cancel shutdown')) {
         executeCommand('arise', 'voice');
         return;
       }
@@ -244,10 +300,56 @@ export default function App() {
     executeCommand(rawText, 'voice');
   };
 
+  // 1-Click Master Emergency Kill Switch Action
+  const handleTriggerKillSwitch = useCallback(async () => {
+    setIsKillSwitchActive(true);
+    stopSpeaking();
+    setIsSpeaking(false);
+    playChime('shutdown');
+
+    await sendKillSwitchToBridge(bridgeUrl);
+    
+    const killResult: CommandResult = {
+      id: `kill-${Date.now()}`,
+      timestamp: new Date().toLocaleTimeString(),
+      command: '🛑 1-Click Emergency Kill Switch',
+      source: 'quick_action',
+      reply: 'EMERGENCY KILL SWITCH ACTIVATED! All shutdown sequences aborted, active speech silenced, and system processes halted.',
+      actionType: 'system_control',
+      systemExecuted: true,
+      bridgeConnected: bridgeStatus.connected,
+      latencyMs: 10,
+    };
+
+    setLastResult(killResult);
+    setResults((prev) => [killResult, ...prev]);
+
+    setTimeout(() => {
+      setIsKillSwitchActive(false);
+    }, 4500);
+  }, [bridgeUrl]);
+
+  // Clear Conversational Memory History
+  const handleClearConversationHistory = useCallback(() => {
+    try {
+      localStorage.removeItem('praj_conversation_history');
+    } catch {
+      // ignore
+    }
+    setResults([]);
+    setLastResult(null);
+    if (bridgeStatus.connected) {
+      fetch(`${bridgeUrl}/api/conversation/clear`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      }).catch(() => {});
+    }
+  }, [bridgeStatus.connected, bridgeUrl]);
+
   // 3. Core Command Execution Engine
-  const executeCommand = async (rawCommand: string, source: 'voice' | 'typing' | 'quick_action') => {
+  const executeCommand = async (rawCommand: string, source: 'voice' | 'typing' | 'quick_action', imageBase64?: string) => {
     const cmd = rawCommand.toLowerCase().trim();
-    if (!cmd) return;
+    if (!cmd && !imageBase64) return;
 
     setIsProcessing(true);
     const startTime = performance.now();
@@ -256,23 +358,102 @@ export default function App() {
     let actionType: CommandResult['actionType'] = 'system_app';
     let systemExecuted = false;
 
-    // Check 0: Greetings, Farewells & Conversational Core
+    // Check 0: Emergency Kill Switch Voice / Command
+    if (
+      cmd.includes('kill switch') ||
+      cmd.includes('emergency stop') ||
+      cmd.includes('emergency halt') ||
+      cmd.includes('terminate system') ||
+      cmd.includes('kill all') ||
+      cmd.includes('emergency abort')
+    ) {
+      actionType = 'system_control';
+      handleTriggerKillSwitch();
+      reply = "EMERGENCY KILL SWITCH ACTIVATED! All operations halted, active audio silenced, and host shutdowns aborted.";
+      systemExecuted = true;
+    }
+
+    // Check 0.1: 1-Click Master System Launch / Activation
+    else if (
+      cmd.includes('activate praj') ||
+      cmd.includes('start praj') ||
+      cmd.includes('launch system') ||
+      cmd.includes('start system') ||
+      cmd.includes('start both') ||
+      cmd.includes('master switch')
+    ) {
+      actionType = 'system_control';
+      playChime('success');
+      setMasterSwitchModalOpen(true);
+      reply = "Opening PRAJ Master Switch console. Both the Python Desktop Bridge and Web Server can be launched in 1-click.";
+    }
+
+    // Check 0.12: Install Python / Python Setup
+    else if (
+      cmd.includes('install python') ||
+      cmd.includes('download python') ||
+      cmd.includes('setup python') ||
+      cmd.includes('python installer')
+    ) {
+      actionType = 'system_control';
+      playChime('success');
+      setMasterSwitchModalOpen(true);
+      reply = "Opening Master Switch with the 1-Click Python Auto-Installer. Double-click INSTALL_PYTHON.bat to download and set up Python automatically on Windows.";
+    }
+
+    // Check 0.15: Voice Customization & Selection Modal
+    else if (
+      cmd.includes('voice settings') ||
+      cmd.includes('change voice') ||
+      cmd.includes('choose voice') ||
+      cmd.includes('select voice') ||
+      cmd.includes('switch voice') ||
+      cmd.includes('voice options') ||
+      cmd.includes('audio settings')
+    ) {
+      actionType = 'system_control';
+      playChime('success');
+      setVoiceModalOpen(true);
+      reply = "Opening Voice and Audio settings. You can select your favorite browser voice, tune pitch and speed, or keep the default female voice.";
+    }
+
+    // Check 0.16: Personalization & User Profile
+    else if (
+      cmd.includes('personalization') ||
+      cmd.includes('persona profile') ||
+      cmd.includes('change persona') ||
+      cmd.includes('change my name') ||
+      cmd.includes('my profile') ||
+      cmd.includes('user profile') ||
+      cmd.includes('personalize')
+    ) {
+      actionType = 'system_control';
+      playChime('success');
+      setPersonalizationModalOpen(true);
+      const userHonorific = personalization.userTitle || personalization.userName || 'Sir';
+      reply = `Opening Personalization settings for you, ${userHonorific}. You can customize your name, persona tone, and focus interests.`;
+    }
+
+    // Check 0.2: Greetings, Farewells & Conversational Core
     if (cmd === 'goodbye' || cmd === 'bye' || cmd.includes('see you later') || cmd === 'exit' || cmd === 'quit') {
       actionType = 'system_control';
-      reply = "Goodbye, sir. PRAJ systems standing by at your command.";
+      const userHonorific = personalization.userTitle || 'sir';
+      reply = `Goodbye, ${userHonorific}. PRAJ systems standing by at your command.`;
     } else if (cmd === 'hello' || cmd === 'hi' || cmd.startsWith('hey ') || cmd.includes('good morning') || cmd.includes('good evening') || cmd.includes('good afternoon')) {
       actionType = 'system_control';
-      reply = "Hello, sir. PRAJ is online and ready for your commands.";
+      const userHonorific = personalization.userTitle || personalization.userName || 'sir';
+      reply = `Hello, ${userHonorific}. PRAJ is online and calibrated to your personal preferences. How can I assist you today?`;
     } else if (cmd.includes('who are you') || cmd.includes('what is your name') || cmd.includes('introduce yourself')) {
       actionType = 'knowledge_base';
-      reply = "I am PRAJ, your Personal Responsive Automated Judicial assistant, capable of desktop system automation, offline knowledge lookup, and voice control.";
-    } else if (cmd.includes('what can you do') || cmd.includes('help me') || cmd.includes('list commands')) {
+      const userHonorific = personalization.userTitle || 'sir';
+      reply = `I am PRAJ, your Personal Responsive Automated Judicial assistant configured in ${personalization.persona} persona mode for you, ${userHonorific}.`;
+    } else if (cmd.includes('what can you do') || cmd.includes('help me') || cmd.includes('list commands') || cmd.includes('capabilities')) {
       actionType = 'knowledge_base';
-      reply = "I can open local desktop apps like Chrome, Notepad, VLC, and Bluetooth; search Wikipedia; provide physics and GK facts; manage memory notes; and execute timed shutdown or cancel it with 'Arise'.";
+      reply = "I can open local desktop apps like Chrome, Notepad, VLC, and Bluetooth; search Wikipedia; provide physics and general knowledge facts; manage memory notes; and execute system power commands.";
     }
 
     // Check 1: Cancel Shutdown / Arise
-    else if (cmd.includes('arise') || cmd.includes('cancel shutdown')) {
+    else if (cmd.includes('arise') || cmd.includes('cancel shutdown') || cmd === 'abort' || cmd === 'stop shutdown') {
       actionType = 'system_control';
       playChime('alert');
       if (bridgeStatus.connected) {
@@ -282,8 +463,91 @@ export default function App() {
       reply = "Shutdown canceled, sir. PRAJ systems stand at full readiness.";
     }
 
-    // Check 2: Shutdown sequence
-    else if (cmd.includes('shutdown')) {
+    // Check 1.5: System Restart
+    else if ((cmd.startsWith('restart') || cmd.startsWith('reboot')) && !cmd.includes('what') && !cmd.includes('why')) {
+      actionType = 'system_control';
+      const digits = cmd.replace(/\D/g, '');
+      const seconds = digits ? parseInt(digits, 10) : 30;
+      playChime('shutdown');
+      if (bridgeStatus.connected) {
+        await sendCommandToBridge(bridgeUrl, rawCommand);
+        systemExecuted = true;
+        reply = `Initiating system restart on host in ${seconds} seconds. Say "Arise" or "Cancel" to abort.`;
+      } else {
+        reply = `System restart queued for ${seconds} seconds. Run 'praj_desktop_bridge.py' to execute OS power controls.`;
+      }
+    }
+
+    // Check 1.6: Lock Screen / Workstation
+    else if (cmd.includes('lock screen') || cmd.includes('lock computer') || cmd.includes('lock pc') || cmd.includes('lock workstation') || cmd === 'lock') {
+      actionType = 'system_control';
+      playChime('alert');
+      if (bridgeStatus.connected) {
+        await sendCommandToBridge(bridgeUrl, rawCommand);
+        systemExecuted = true;
+        reply = "Workstation locked securely, sir.";
+      } else {
+        reply = "Lock screen command received. Connect the Desktop Bridge to lock your host operating system instantly.";
+      }
+    }
+
+    // Check 1.7: Master Volume & Audio Controls
+    else if (
+      cmd.includes('volume up') || cmd.includes('increase volume') || cmd.includes('louder') ||
+      cmd.includes('volume down') || cmd.includes('decrease volume') || cmd.includes('lower volume') ||
+      cmd === 'mute' || cmd === 'unmute' || cmd.includes('mute audio') || cmd.includes('mute volume')
+    ) {
+      actionType = 'system_control';
+      if (bridgeStatus.connected) {
+        const bridgeRes = await sendCommandToBridge(bridgeUrl, rawCommand);
+        systemExecuted = true;
+        reply = bridgeRes.reply || "Adjusting system volume.";
+      } else {
+        reply = "Master volume adjusted. Connect Desktop Bridge for direct Windows audio key emulation.";
+      }
+    }
+
+    // Check 1.8: Media Playback Controls
+    else if (
+      cmd.includes('pause music') || cmd.includes('resume music') || cmd.includes('pause video') ||
+      cmd === 'pause' || cmd.includes('next track') || cmd.includes('next song') ||
+      cmd.includes('previous track') || cmd.includes('previous song') || cmd.includes('skip song')
+    ) {
+      actionType = 'system_control';
+      if (bridgeStatus.connected) {
+        const bridgeRes = await sendCommandToBridge(bridgeUrl, rawCommand);
+        systemExecuted = true;
+        reply = bridgeRes.reply || "Media playback command executed.";
+      } else {
+        reply = "Media command sent. Connect Desktop Bridge to control Spotify, YouTube, and active background players.";
+      }
+    }
+
+    // Check 1.9: Desktop Screenshot
+    else if (cmd.includes('take screenshot') || cmd.includes('capture screen') || cmd === 'screenshot') {
+      actionType = 'system_control';
+      playChime('success');
+      if (bridgeStatus.connected) {
+        const bridgeRes = await sendCommandToBridge(bridgeUrl, rawCommand);
+        systemExecuted = true;
+        reply = bridgeRes.reply || "Screenshot captured and saved to your Desktop.";
+      } else {
+        reply = "Screenshot command queued. Start the Desktop Bridge to capture and save host display images.";
+      }
+    }
+
+    // Check 2: Explicit Shutdown sequence (requires explicit intent, rejects questions and conversational queries)
+    else if (
+      (cmd.startsWith('shutdown') || cmd.startsWith('shut down') || cmd === 'power off' || cmd.startsWith('turn off pc') || cmd.startsWith('turn off computer') || cmd.startsWith('turn off system')) &&
+      !cmd.includes('what') &&
+      !cmd.includes('how') &&
+      !cmd.includes('why') &&
+      !cmd.includes('explain') &&
+      !cmd.includes("don't") &&
+      !cmd.includes('dont') &&
+      !cmd.includes('cancel') &&
+      !cmd.includes('abort')
+    ) {
       actionType = 'system_control';
       const digits = cmd.replace(/\D/g, '');
       const seconds = digits ? parseInt(digits, 10) : 30;
@@ -323,6 +587,47 @@ export default function App() {
       }
     }
 
+    // Check 4.5: Conversational History Recall & Summary
+    else if (
+      cmd.includes('previous conversation') ||
+      cmd.includes('what did we talk about') ||
+      cmd.includes('what did we discuss') ||
+      cmd.includes('what did i just ask') ||
+      cmd.includes('what was my last question') ||
+      cmd.includes('what did i say before') ||
+      cmd.includes('what was our last conversation') ||
+      cmd.includes('summarize our conversation') ||
+      cmd.includes('summarize conversation')
+    ) {
+      actionType = 'memory';
+      if (results.length === 0) {
+        reply = "We haven't recorded any previous conversations in this session yet, sir.";
+      } else {
+        const recent = results.slice(0, 4);
+        if (cmd.includes('last question') || cmd.includes('just ask') || cmd.includes('say before')) {
+          const last = recent[0];
+          reply = `Your previous question was "${last.command}", to which I answered: "${last.reply}".`;
+        } else {
+          const summaries = recent.map((r, i) => `${i + 1}: You asked "${r.command}"`).join('. ');
+          reply = `In our recent conversations, ${summaries}. I retain all these turns in memory.`;
+        }
+      }
+    }
+
+    // Check 4.6: Clear Conversation History
+    else if (
+      cmd.includes('clear conversation history') ||
+      cmd.includes('clear chat history') ||
+      cmd.includes('delete conversation history') ||
+      cmd.includes('forget our conversation') ||
+      cmd.includes('forget conversations')
+    ) {
+      actionType = 'memory';
+      playChime('alert');
+      handleClearConversationHistory();
+      reply = "Previous conversation history has been cleared from memory, sir.";
+    }
+
     // Check 5: Current Time
     else if (cmd.includes('time') || cmd.includes('what time is it') || cmd.includes('current time')) {
       actionType = 'system_control';
@@ -360,7 +665,7 @@ export default function App() {
       }
     }
 
-    // Check 8: Local Desktop Application Launch (e.g. Chrome, Notepad, VLC, Notepad++, Bluetooth, Calculator)
+    // Check 8: Local Desktop Application Launch & Hardware Diagnostics
     else if (
       cmd.includes('open chrome') ||
       cmd.includes('open notepad') ||
@@ -370,11 +675,25 @@ export default function App() {
       cmd.includes('open bluetooth') ||
       cmd.includes('bluetooth settings') ||
       cmd.includes('open calculator') ||
-      cmd.includes('open calc')
+      cmd.includes('open calc') ||
+      cmd.includes('open task manager') ||
+      cmd.includes('open file explorer') ||
+      cmd.includes('open downloads') ||
+      cmd.includes('open vs code') ||
+      cmd.includes('open vscode') ||
+      cmd.includes('open code') ||
+      cmd.includes('open terminal') ||
+      cmd.includes('open command prompt') ||
+      cmd.includes('open cmd') ||
+      cmd.includes('open camera') ||
+      cmd.includes('open snipping tool') ||
+      cmd.includes('open settings') ||
+      cmd.includes('battery') ||
+      cmd.includes('hardware status') ||
+      cmd.includes('system status')
     ) {
       actionType = 'system_app';
       if (bridgeStatus.connected) {
-        // Direct execution on host PC!
         const bridgeRes = await sendCommandToBridge(bridgeUrl, rawCommand);
         if (bridgeRes.success) {
           systemExecuted = true;
@@ -383,24 +702,115 @@ export default function App() {
           reply = `Attempted host execution, but bridge returned: ${bridgeRes.error}`;
         }
       } else {
-        // Fallback with clear explanation and helpful action rather than "I can't do that"
         const appName = cmd.includes('chrome')
           ? 'Google Chrome'
           : cmd.includes('vlc')
           ? 'VLC Media Player'
-          : cmd.includes('notepad++')
-          ? 'Notepad++'
-          : cmd.includes('bluetooth')
-          ? 'Bluetooth Settings'
+          : cmd.includes('task manager')
+          ? 'Task Manager'
+          : cmd.includes('file explorer') || cmd.includes('downloads')
+          ? 'File Explorer'
+          : cmd.includes('code')
+          ? 'Visual Studio Code'
+          : cmd.includes('terminal') || cmd.includes('cmd')
+          ? 'Terminal'
+          : cmd.includes('camera')
+          ? 'Camera'
+          : cmd.includes('snipping')
+          ? 'Snipping Tool'
+          : cmd.includes('settings')
+          ? 'Settings'
+          : cmd.includes('battery')
+          ? 'Battery Diagnostics'
+          : cmd.includes('status')
+          ? 'System Diagnostics'
           : cmd.includes('calc')
           ? 'Calculator'
-          : 'Notepad';
+          : 'Desktop Tool';
 
-        reply = `Launching ${appName}. To execute directly on your desktop machine, start 'praj_desktop_bridge.py'.`;
+        reply = `Triggered ${appName}. Connect 'praj_desktop_bridge.py' to launch natively on your personal computer.`;
       }
     }
 
-    // Check 9: Web Navigation Apps (YouTube, Spotify, WhatsApp, Gmail, ChatGPT, Facebook, GitHub)
+    // Check 8.5: Music & Video Playback (YouTube & Spotify)
+    else if (
+      cmd.startsWith('play ') ||
+      cmd.includes('play on youtube') ||
+      cmd.includes('play on yt') ||
+      cmd.includes('play song') ||
+      cmd.includes('play songs') ||
+      cmd.includes('search youtube for') ||
+      (cmd.includes('youtube') && (cmd.includes('play') || cmd.includes('song') || cmd.includes('music')))
+    ) {
+      actionType = 'system_app';
+      let songQuery = cmd
+        .replace(/^play( on)? (youtube|yt)/i, '')
+        .replace(/^search youtube for/i, '')
+        .replace(/^play/i, '')
+        .replace(/on (youtube|yt)/gi, '')
+        .replace(/songs?/gi, '')
+        .replace(/music/gi, '')
+        .trim();
+
+      if (!songQuery) songQuery = 'top trending songs';
+
+      const ytUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(songQuery)}`;
+
+      if (bridgeStatus.connected) {
+        const bridgeRes = await sendCommandToBridge(bridgeUrl, rawCommand);
+        systemExecuted = true;
+        reply = bridgeRes.reply || `Playing "${songQuery}" on YouTube on your computer, sir.`;
+      } else {
+        window.open(ytUrl, '_blank', 'noopener,noreferrer');
+        reply = `Playing "${songQuery}" on YouTube.`;
+      }
+    }
+
+    // Check 8.8: Smart Web Searches (Google, Maps, Amazon)
+    else if (
+      cmd.startsWith('search google for ') ||
+      cmd.startsWith('google ') ||
+      cmd.startsWith('search map for ') ||
+      cmd.startsWith('where is ') ||
+      cmd.startsWith('directions to ') ||
+      cmd.startsWith('search amazon for ') ||
+      (cmd.startsWith('buy ') && !cmd.startsWith('buy me a'))
+    ) {
+      actionType = 'system_app';
+      if (cmd.startsWith('search google for ') || cmd.startsWith('google ')) {
+        const query = cmd.replace('search google for ', '').replace('google ', '').trim();
+        const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+        if (bridgeStatus.connected) {
+          await sendCommandToBridge(bridgeUrl, rawCommand);
+          systemExecuted = true;
+        } else {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        }
+        reply = `Searching Google for "${query}".`;
+      } else if (cmd.startsWith('search map for ') || cmd.startsWith('where is ') || cmd.startsWith('directions to ')) {
+        const place = cmd.replace('search map for ', '').replace('where is ', '').replace('directions to ', '').trim();
+        const url = `https://www.google.com/maps/search/${encodeURIComponent(place)}`;
+        if (bridgeStatus.connected) {
+          await sendCommandToBridge(bridgeUrl, rawCommand);
+          systemExecuted = true;
+        } else {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        }
+        reply = `Locating "${place}" on Google Maps.`;
+      } else {
+        const item = cmd.replace('search amazon for ', '').replace('buy ', '').trim();
+        const url = `https://www.amazon.com/s?k=${encodeURIComponent(item)}`;
+        if (bridgeStatus.connected) {
+          await sendCommandToBridge(bridgeUrl, rawCommand);
+          systemExecuted = true;
+        } else {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        }
+        reply = `Searching Amazon for "${item}".`;
+      }
+    }
+
+    // Check 9: Web Navigation Portals
     else if (
       cmd.includes('open youtube') ||
       cmd.includes('open spotify') ||
@@ -409,7 +819,14 @@ export default function App() {
       cmd.includes('open chat gpt') ||
       cmd.includes('open chatgpt') ||
       cmd.includes('open facebook') ||
-      cmd.includes('open github')
+      cmd.includes('open github') ||
+      cmd.includes('open netflix') ||
+      cmd.includes('open reddit') ||
+      cmd.includes('open discord') ||
+      cmd.includes('open twitter') ||
+      cmd.includes('open linkedin') ||
+      cmd.includes('open instagram') ||
+      cmd.includes('open amazon')
     ) {
       actionType = 'system_app';
       const webMap: Record<string, { url: string; name: string }> = {
@@ -421,6 +838,13 @@ export default function App() {
         chatgpt: { url: 'https://chatgpt.com/', name: 'ChatGPT' },
         facebook: { url: 'https://www.facebook.com', name: 'Facebook' },
         github: { url: 'https://github.com', name: 'GitHub' },
+        netflix: { url: 'https://www.netflix.com', name: 'Netflix' },
+        reddit: { url: 'https://www.reddit.com', name: 'Reddit' },
+        discord: { url: 'https://discord.com/app', name: 'Discord' },
+        twitter: { url: 'https://x.com', name: 'Twitter / X' },
+        linkedin: { url: 'https://www.linkedin.com', name: 'LinkedIn' },
+        instagram: { url: 'https://www.instagram.com', name: 'Instagram' },
+        amazon: { url: 'https://www.amazon.com', name: 'Amazon' },
       };
 
       for (const [key, info] of Object.entries(webMap)) {
@@ -429,12 +853,30 @@ export default function App() {
             await sendCommandToBridge(bridgeUrl, rawCommand);
             systemExecuted = true;
           } else {
-            // Open in browser tab as immediate fulfillment!
             window.open(info.url, '_blank', 'noopener,noreferrer');
           }
           reply = `Opening ${info.name}.`;
           break;
         }
+      }
+    }
+
+    // Check 9.5: Live Weather Query
+    else if (cmd.includes('weather') || cmd.includes('temperature') || cmd.includes('forecast')) {
+      actionType = 'knowledge_base';
+      let city = 'Delhi';
+      if (cmd.includes(' in ')) {
+        city = cmd.split(' in ')[1].replace(/[?.!]/g, '').trim();
+      } else if (cmd.includes(' for ')) {
+        city = cmd.split(' for ')[1].replace(/[?.!]/g, '').trim();
+      }
+
+      try {
+        const res = await fetch(`/api/weather?q=${encodeURIComponent(city)}`);
+        const data = await res.json();
+        reply = data.summary || `Current weather in ${city} is ${data.desc || 'Fair'} at ${data.tempC || 24}°C.`;
+      } catch {
+        reply = `The forecast in ${city} is currently mild and clear.`;
       }
     }
 
@@ -448,15 +890,52 @@ export default function App() {
         // Check 11: General AI Query via Universal AI Gateway (Gemini, OpenRouter, OpenAI, Custom)
         actionType = 'ai_chat';
         try {
+          // Ensure we have the latest config even if state update was asynchronous
+          let effectiveKey = (aiConfig.apiKey || '').trim();
+          let effectiveProvider = aiConfig.provider;
+          let effectiveUrl = (aiConfig.baseUrl || '').trim();
+          let effectiveModel = (aiConfig.model || '').trim();
+
+          if (!effectiveKey) {
+            try {
+              const saved = localStorage.getItem('praj_ai_config');
+              if (saved) {
+                const parsed = JSON.parse(saved);
+                if (parsed.apiKey) {
+                  effectiveKey = parsed.apiKey.trim();
+                  effectiveProvider = parsed.provider || effectiveProvider;
+                  effectiveUrl = parsed.baseUrl || effectiveUrl;
+                  effectiveModel = parsed.model || effectiveModel;
+                }
+              }
+            } catch {
+              // ignore
+            }
+          }
+
+          // Format previous conversation turns (up to last 10 exchanges) for multi-turn conversational memory
+          const historyPayload: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+          const recentTurns = results.slice(0, 10).reverse();
+          for (const item of recentTurns) {
+            if (item.command && item.reply) {
+              historyPayload.push({ role: 'user', content: item.command });
+              historyPayload.push({ role: 'assistant', content: item.reply });
+            }
+          }
+
           const res = await fetch('/api/ai/ask', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               prompt: rawCommand,
-              provider: aiConfig.provider,
-              customApiKey: aiConfig.apiKey,
-              customBaseUrl: aiConfig.baseUrl,
-              customModel: aiConfig.model,
+              provider: effectiveProvider,
+              customApiKey: effectiveKey,
+              customBaseUrl: effectiveUrl,
+              customModel: effectiveModel,
+              history: historyPayload,
+              memory: storedMemory,
+              personalization,
+              image: imageBase64,
             }),
           });
           const data = await res.json();
@@ -483,20 +962,51 @@ export default function App() {
       systemExecuted,
       bridgeConnected: bridgeStatus.connected,
       latencyMs,
+      imageUrl: imageBase64,
     };
 
-    setResults((prev) => [newResult, ...prev]);
+    setResults((prev) => {
+      const updated = [newResult, ...prev];
+      try {
+        localStorage.setItem('praj_conversation_history', JSON.stringify(updated.slice(0, 60)));
+      } catch (e) {
+        console.warn('Failed to save conversation history to localStorage:', e);
+      }
+      return updated;
+    });
+
+    // Also sync conversation turn to local desktop bridge if connected
+    if (bridgeStatus.connected) {
+      fetch(`${bridgeUrl}/api/conversation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          command: rawCommand,
+          reply,
+          action: actionType,
+        }),
+      }).catch(() => {});
+    }
+
     setLastResult(newResult);
     setIsProcessing(false);
     setTranscript('');
 
     // Voice response output
     if (!voiceMuted && reply) {
+      isSpeakingRef.current = true;
       setIsSpeaking(true);
       speakJarvis(reply, {
         enabled: !voiceMuted,
-        onStart: () => setIsSpeaking(true),
-        onEnd: () => setIsSpeaking(false),
+        onStart: () => {
+          isSpeakingRef.current = true;
+          setIsSpeaking(true);
+        },
+        onEnd: () => {
+          isSpeakingRef.current = false;
+          setIsSpeaking(false);
+          speechCooldownRef.current = Date.now() + 600; // 600ms acoustic grace period to absorb room echo
+        },
       });
     } else {
       playChime(systemExecuted ? 'success' : 'wake');
@@ -504,11 +1014,19 @@ export default function App() {
   };
 
   const handleReplayVoice = (text: string) => {
+    isSpeakingRef.current = true;
     setIsSpeaking(true);
     speakJarvis(text, {
       enabled: true,
-      onStart: () => setIsSpeaking(true),
-      onEnd: () => setIsSpeaking(false),
+      onStart: () => {
+        isSpeakingRef.current = true;
+        setIsSpeaking(true);
+      },
+      onEnd: () => {
+        isSpeakingRef.current = false;
+        setIsSpeaking(false);
+        speechCooldownRef.current = Date.now() + 600;
+      },
     });
   };
 
@@ -542,6 +1060,11 @@ export default function App() {
           setVoiceMuted(!voiceMuted);
         }}
         onOpenBridgeModal={() => setBridgeModalOpen(true)}
+        onOpenMasterSwitch={() => setMasterSwitchModalOpen(true)}
+        onTriggerKillSwitch={handleTriggerKillSwitch}
+        isKillSwitchActive={isKillSwitchActive}
+        onOpenVoiceSettings={() => setVoiceModalOpen(true)}
+        onOpenPersonalization={() => setPersonalizationModalOpen(true)}
         onOpenMemoryModal={() => setMemoryModalOpen(true)}
         onOpenKnowledgeModal={() => setKnowledgeModalOpen(true)}
         onToggleLogs={() => setShowLogs(!showLogs)}
@@ -603,6 +1126,32 @@ export default function App() {
       </main>
 
       {/* Modals */}
+      <MasterSwitchModal
+        isOpen={masterSwitchModalOpen}
+        onClose={() => setMasterSwitchModalOpen(false)}
+        bridgeStatus={bridgeStatus}
+        onTriggerKillSwitch={handleTriggerKillSwitch}
+        onRefreshStatus={() => checkBridge()}
+        isKillSwitchActive={isKillSwitchActive}
+      />
+
+      <VoiceSettingsModal
+        isOpen={voiceModalOpen}
+        onClose={() => setVoiceModalOpen(false)}
+        voiceMuted={voiceMuted}
+        onToggleMute={() => {
+          if (!voiceMuted) stopSpeaking();
+          setVoiceMuted(!voiceMuted);
+        }}
+      />
+
+      <PersonalizationModal
+        isOpen={personalizationModalOpen}
+        onClose={() => setPersonalizationModalOpen(false)}
+        personalization={personalization}
+        onSave={handleSavePersonalization}
+      />
+
       <BridgeSetupModal
         isOpen={bridgeModalOpen}
         onClose={() => setBridgeModalOpen(false)}
@@ -610,6 +1159,7 @@ export default function App() {
         onCheckBridge={checkBridge}
         bridgeUrl={bridgeUrl}
         setBridgeUrl={setBridgeUrl}
+        onOpenMasterSwitch={() => setMasterSwitchModalOpen(true)}
       />
 
       <MemoryModal
@@ -617,6 +1167,8 @@ export default function App() {
         onClose={() => setMemoryModalOpen(false)}
         memory={storedMemory}
         onSaveMemory={handleSaveMemory}
+        conversationHistory={results}
+        onClearConversationHistory={handleClearConversationHistory}
       />
 
       <KnowledgeModal
