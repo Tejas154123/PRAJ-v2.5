@@ -33,6 +33,15 @@ development and production builds. After editing the installer, run
 
 ## Architecture Overview
 
+For Windows startup, extract the **entire repository ZIP**, then double-click
+`START_PRAJ.bat`. The launcher locates Python even if the current window has an
+old PATH, checks Node.js and project files, installs missing web dependencies,
+and opens the dashboard only after both services respond. Node.js LTS must be
+installed separately. Keep the bridge and web server console windows open.
+If startup fails, the error remains visible; copy that text when reporting it.
+The master menu and toggle both use this same launcher. Downloaded batch files
+must be placed in the extracted project folder, not run alone from Downloads.
+
 ```
                       +--------------------------------------+
                       |      Browser Voice / Web UI          |
