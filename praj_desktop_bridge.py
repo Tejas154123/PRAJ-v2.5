@@ -933,34 +933,25 @@ class PrajBridgeHandler(BaseHTTPRequestHandler):
         self.wfile.write(json.dumps({"error": "Unknown POST route"}).encode("utf-8"))
 
 def start_server():
-    server_address = ("127.0.0.1", BRIDGE_PORT)
+    # Bind before announcing readiness. A bind error must stop startup.
+    httpd = ServerClass(("127.0.0.1", BRIDGE_PORT), PrajBridgeHandler)
+    print(f"PRAJ DESKTOP BRIDGE ACTIVE ON http://127.0.0.1:{BRIDGE_PORT}", flush=True)
+    if os.environ.get("PRAJ_NO_BROWSER") != "1":
+        webbrowser.open(WEB_APP_URL)
     try:
-        httpd = ServerClass(server_address, PrajBridgeHandler)
-    except Exception as e:
-        print(f"Warning on 127.0.0.1 binding: {e}, falling back to localhost")
-        server_address = ("localhost", BRIDGE_PORT)
-        httpd = ServerClass(server_address, PrajBridgeHandler)
+        httpd.serve_forever()
+    finally:
+        httpd.server_close()
 
-    print(f"\n=======================================================")
-    print(f"  PRAJ DESKTOP BRIDGE ACTIVE ON http://127.0.0.1:{BRIDGE_PORT}")
-    print(f"  Ready to receive commands from the PRAJ Web Interface.")
-    print(f"=======================================================\n")
-    httpd.serve_forever()
 
 if __name__ == "__main__":
-    # Start the HTTP server in a daemon thread
-    server_thread = threading.Thread(target=start_server, daemon=True)
-    server_thread.start()
-
-    # Automatically launch the web interface in the browser
-    print("Launching PRAJ Web UI...")
-    webbrowser.open(WEB_APP_URL)
-
-    speak("PRAJ Desktop Bridge is now operational.")
-
-    # Keep main thread alive
     try:
-        while True:
-            time.sleep(1)
+        start_server()
     except KeyboardInterrupt:
         print("\nShutting down PRAJ Desktop Bridge. Goodbye!")
+    except Exception as exc:
+        print(f"[ERROR] PRAJ bridge could not start: {exc}", file=sys.stderr)
+        print("Check whether another program is using port 5000.", file=sys.stderr)
+        if sys.platform.startswith("win") and sys.stdin.isatty():
+            input("Press Enter to close...")
+        sys.exit(1)
