@@ -8,6 +8,29 @@ PRAJ operates in **Dual-Mode**:
 
 ---
 
+## One-click Python setup on Windows
+
+Download `INSTALL_PYTHON.bat` from this repository or the app's Master Switch
+panel, then double-click it on Windows 10 or 11 with an internet connection.
+No Python installation is needed to run the installer. Windows may ask you to
+confirm opening a downloaded file.
+
+The script checks for a working Python 3.9 or newer using the launcher, PATH,
+standard installation folders, and the registry. If none is found, it downloads
+Python 3.13.15 from python.org for x64, x86, or ARM64, verifies the publisher's
+signature, and installs it for the current user with pip and PATH enabled.
+It waits for completion and verifies Python and the PRAJ libraries before
+reporting success. Existing compatible Python installations are reused.
+
+Failures remain visible in the console and return a nonzero exit code. Detailed
+logs are saved in the displayed `%TEMP%\PRAJ-setup-...` folder. Open PRAJ from a
+new window after setup so it sees updated PATH settings. This installs Python
+and its libraries; the web interface still requires Node.js.
+
+The app and server use a shared module generated from this batch file before
+development and production builds. After editing the installer, run
+`npm run sync:installer`; `npm run lint` checks that the copy stays in sync.
+
 ## Architecture Overview
 
 ```

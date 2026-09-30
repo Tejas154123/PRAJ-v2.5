@@ -2,131 +2,9 @@
  * Windows 1-Click Batch Automation Scripts for PRAJ System
  */
 
-export const INSTALL_PYTHON_BAT = `@echo off
-setlocal EnableDelayedExpansion
-title PRAJ SYSTEM - 1-CLICK PYTHON AUTO-INSTALLER
-color 0A
-cls
-echo =====================================================================
-echo           PRAJ AI - 1-CLICK PYTHON INSTALLER FOR WINDOWS
-echo =====================================================================
-echo.
-echo [*] Checking if Python is already available on this PC...
-
-:: Check standard python command
-python --version >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "tokens=*" %%v in ('python --version 2^>^&1') do set "PY_VER=%%v"
-    echo [FOUND] Python is installed: !PY_VER!
-    goto INSTALL_LIBS
-)
-
-:: Check py launcher
-py -3 --version >nul 2>&1
-if %errorlevel% equ 0 (
-    for /f "tokens=*" %%v in ('py -3 --version 2^>^&1') do set "PY_VER=%%v"
-    echo [FOUND] Python launcher is installed: !PY_VER!
-    goto INSTALL_LIBS_PY
-)
-
-:: Check common default installation locations
-if exist "%LOCALAPPDATA%\\Programs\\Python\\Python311\\python.exe" (
-    set "PATH=%LOCALAPPDATA%\\Programs\\Python\\Python311;%LOCALAPPDATA%\\Programs\\Python\\Python311\\Scripts;!PATH!"
-    echo [FOUND] Python found in AppData!
-    goto INSTALL_LIBS
-)
-if exist "%ProgramFiles%\\Python311\\python.exe" (
-    set "PATH=%ProgramFiles%\\Python311;%ProgramFiles%\\Python311\\Scripts;!PATH!"
-    echo [FOUND] Python found in Program Files!
-    goto INSTALL_LIBS
-)
-
-echo [!] Python is NOT detected in your Windows system.
-echo [*] Downloading official Python 3.11 for Windows...
-echo.
-
-set "PY_INSTALLER_PATH=%TEMP%\\praj_python_setup.exe"
-set "PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe"
-
-if "%PROCESSOR_ARCHITECTURE%"=="x86" (
-    if not defined PROCESSOR_ARCHITEW6432 (
-        set "PY_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9.exe"
-    )
-)
-
-echo [*] Downloading installer from python.org to %TEMP%...
-echo     URL: %PY_URL%
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('%PY_URL%', '%PY_INSTALLER_PATH%')"
-
-if not exist "%PY_INSTALLER_PATH%" (
-    echo [!] Direct download failed or was interrupted.
-    echo [*] Attempting install via winget (Windows Package Manager)...
-    winget install --id Python.Python.3.11 -e --source winget --accept-source-agreements --accept-package-agreements
-    goto VERIFY_INSTALL
-)
-
-echo.
-echo [*] Installing Python silently for the current user...
-echo [*] Adding Python to Windows PATH automatically (PrependPath=1)...
-"%PY_INSTALLER_PATH%" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_test=0 Include_doc=0 Include_launcher=1 Shortcuts=0
-
-echo [*] Waiting for Windows registry & environment update...
-timeout /t 6 /nobreak >nul
-
-if exist "%PY_INSTALLER_PATH%" del /f /q "%PY_INSTALLER_PATH%" >nul 2>&1
-
-:VERIFY_INSTALL
-set "PATH=%LOCALAPPDATA%\\Programs\\Python\\Python311;%LOCALAPPDATA%\\Programs\\Python\\Python311\\Scripts;%ProgramFiles%\\Python311;%ProgramFiles%\\Python311\\Scripts;!PATH!"
-
-python --version >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [SUCCESS] Python installed successfully!
-    python --version
-    goto INSTALL_LIBS
-)
-
-py -3 --version >nul 2>&1
-if %errorlevel% equ 0 (
-    echo [SUCCESS] Python installed and py launcher is ready!
-    py -3 --version
-    goto INSTALL_LIBS_PY
-)
-
-echo.
-echo [NOTE] Python installation has finished, but your current command prompt
-echo        needs to refresh its PATH variable.
-echo        Please close this window and re-run PRAJ_MASTER_SWITCH.bat.
-echo.
-pause
-exit /b 0
-
-:INSTALL_LIBS
-echo.
-echo [*] Checking pip and installing PRAJ bridge libraries (flask, flask-cors, psutil, pywin32)...
-python -m pip install --upgrade pip --quiet --disable-pip-version-check >nul 2>&1
-python -m pip install flask flask-cors psutil pywin32 --quiet --disable-pip-version-check
-echo.
-echo =====================================================================
-echo    [READY] Python & all PRAJ bridge libraries are installed!
-echo    You can now run PRAJ without any errors.
-echo =====================================================================
-echo.
-pause
-exit /b 0
-
-:INSTALL_LIBS_PY
-echo.
-echo [*] Installing PRAJ bridge libraries using py launcher...
-py -3 -m pip install flask flask-cors psutil pywin32 --quiet --disable-pip-version-check
-echo.
-echo =====================================================================
-echo    [READY] Python & all PRAJ bridge libraries are installed!
-echo =====================================================================
-echo.
-pause
-exit /b 0
-`;
+// Keep the standalone installer and the browser download identical.
+import pythonInstaller from './pythonInstaller';
+export const INSTALL_PYTHON_BAT = pythonInstaller;
 
 export const START_PRAJ_BAT = `@echo off
 title PRAJ SYSTEM - 1-CLICK MASTER LAUNCHER
@@ -608,7 +486,8 @@ exit /b
 `;
 
 export function downloadScriptFile(filename: string, content: string) {
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const windowsContent = content.replace(/\r?\n/g, '\r\n');
+  const blob = new Blob([windowsContent], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

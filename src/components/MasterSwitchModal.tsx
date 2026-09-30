@@ -223,7 +223,7 @@ export function MasterSwitchModal({
                     </h3>
                   </div>
                   <p className="text-xs text-slate-300 mt-0.5 leading-relaxed">
-                    Python not installed on Windows? Double-click this script: it auto-downloads official Python 3.11, adds it to Windows PATH, installs pip, and installs all PRAJ bridge libraries (<code className="text-emerald-300 font-mono">flask</code>, <code className="text-emerald-300 font-mono">psutil</code>, <code className="text-emerald-300 font-mono">pywin32</code>) silently in 1 click!
+                    Download this script and double-click it on Windows. It reuses an existing Python installation or automatically downloads and installs official Python 3.13 for your PC, then sets up pip and the PRAJ libraries. An internet connection is required. Any installation errors stay visible with a log location.
                   </p>
                 </div>
               </div>
