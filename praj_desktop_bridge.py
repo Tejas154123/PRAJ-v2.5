@@ -85,11 +85,60 @@ except Exception:
     def speak(text, force=False):
         print(f"PRAJ (voice output): {text}")
 
-# Target Web App URL (change if hosted remotely or use AI Studio URL)
-WEB_APP_URL = "http://localhost:3000"
+# Target Web App URLs: Checks local port 3000 first; if not running, defaults to the hosted PRAJ Web App
+LOCAL_WEB_APP_URL = "http://localhost:3000"
+HOSTED_WEB_APP_URL = "https://ais-dev-grpahkusxz6afiadipb4go-151229087198.asia-southeast1.run.app"
+WEB_APP_URL = HOSTED_WEB_APP_URL
 BRIDGE_PORT = 5000
 MEMORY_FILE = "temp_memory.txt"
 CONVERSATION_FILE = "conversation_history.json"
+
+def check_microphone_available():
+    """Detect if a microphone/audio input device is physically connected and available on the host system."""
+    try:
+        if sys.platform == "win32":
+            # Check via Windows Multimedia winmm API
+            try:
+                import ctypes
+                winmm = ctypes.windll.winmm
+                waveInGetNumDevs = winmm.waveInGetNumDevs
+                num_devices = waveInGetNumDevs()
+                if num_devices > 0:
+                    return True
+            except Exception:
+                pass
+
+            # Fallback: check via Windows PowerShell Audio Device query
+            try:
+                cmd = 'powershell -NoProfile -Command "Get-CimInstance Win32_SoundDevice | Select-Object -ExpandProperty Status"'
+                proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=3)
+                if proc.returncode == 0 and "OK" in proc.stdout:
+                    return True
+            except Exception:
+                pass
+        else:
+            # Linux / macOS check
+            if os.path.exists("/proc/asound/cards"):
+                with open("/proc/asound/cards", "r") as f:
+                    if len(f.read().strip()) > 0:
+                        return True
+    except Exception as e:
+        print("[MIC DETECTION] Error checking microphone:", e)
+    # Default to True so browser can negotiate standard Web Audio / Speech API
+    return True
+
+def get_preferred_web_url():
+    """Determine whether to launch local dev server or cloud-hosted web voice dashboard."""
+    # Check if local port 3000 is open
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.4)
+            if s.connect_ex(("127.0.0.1", 3000)) == 0:
+                return LOCAL_WEB_APP_URL
+    except Exception:
+        pass
+    return HOSTED_WEB_APP_URL
 
 # Offline Knowledge Base (Zero-API)
 KNOWLEDGE_BASE = {
@@ -825,13 +874,25 @@ class PrajBridgeHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
 
+        # If user visits root or opens localhost:5000 in browser, redirect immediately to full Web Voice interface!
+        if path in ["", "/"]:
+            target_url = get_preferred_web_url()
+            self.send_response(302)
+            self.send_header("Location", target_url)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            return
+
         if path in ["/api/status", "/api/health", "/status", "/health"]:
+            has_mic = check_microphone_available()
             payload = {
                 "status": "online",
                 "connected": True,
                 "agent": "PRAJ Desktop Bridge",
                 "platform": sys.platform,
                 "system_time": datetime.datetime.now().strftime("%I:%M:%S %p"),
+                "has_microphone": has_mic,
+                "preferred_web_url": get_preferred_web_url(),
                 "stored_memory": recall_memory()
             }
             self._set_cors_headers(200)
@@ -952,9 +1013,18 @@ if __name__ == "__main__":
     server_thread = threading.Thread(target=start_server, daemon=True)
     server_thread.start()
 
-    # Automatically launch the web interface in the browser
-    print("Launching PRAJ Web UI...")
-    webbrowser.open(WEB_APP_URL)
+    # Automatically check microphone status on startup
+    mic_connected = check_microphone_available()
+    target_launch_url = get_preferred_web_url()
+
+    print(f"[*] Microphone detected on host: {'YES' if mic_connected else 'NO (Keyboard & voice response ready)'}")
+    print(f"[*] Opening PRAJ Web Voice Interface: {target_launch_url}")
+
+    # Automatically launch the web voice UI in default browser
+    try:
+        webbrowser.open(target_launch_url)
+    except Exception as e:
+        print("[LAUNCH ERROR] Could not open browser:", e)
 
     speak("PRAJ Desktop Bridge is now operational.")
 

@@ -44,6 +44,8 @@ export default function App() {
   const [hasGeminiKey, setHasGeminiKey] = useState<boolean>(true);
   const [voiceMuted, setVoiceMuted] = useState<boolean>(false);
   const [continuousMode, setContinuousMode] = useState<boolean>(false);
+  const [hasMic, setHasMic] = useState<boolean>(true);
+  const [micErrorNotice, setMicErrorNotice] = useState<string | null>(null);
 
   // Voice Interaction State
   const [isListening, setIsListening] = useState<boolean>(false);
@@ -193,6 +195,8 @@ export default function App() {
 
     rec.onstart = () => {
       setIsListening(true);
+      setHasMic(true);
+      setMicErrorNotice(null);
       playChime('wake');
     };
 
@@ -219,14 +223,23 @@ export default function App() {
     };
 
     rec.onerror = (e: any) => {
-      console.warn('Speech recognition error:', e.error);
-      if (e.error !== 'no-speech') {
+      console.warn('Speech recognition status:', e.error);
+      if (e.error === 'audio-capture' || e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        setIsListening(false);
+        setHasMic(false);
+        setContinuousMode(false);
+        setMicErrorNotice(
+          e.error === 'audio-capture'
+            ? 'No microphone detected on your computer. Text mode is fully active!'
+            : 'Microphone access is blocked. Text commands, hotkeys, and voice outputs are fully functional!'
+        );
+      } else if (e.error !== 'no-speech') {
         setIsListening(false);
       }
     };
 
     rec.onend = () => {
-      if (continuousMode) {
+      if (continuousMode && hasMic) {
         try {
           rec.start();
         } catch {
@@ -239,21 +252,40 @@ export default function App() {
 
     recognitionRef.current = rec;
 
+    // Robust microphone hardware detection
+    if (navigator?.mediaDevices?.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then((devices) => {
+        const audioInputs = devices.filter((d) => d.kind === 'audioinput');
+        // If devices are enumerated, check if any audioinput exists or has a deviceId
+        if (devices.length > 0) {
+          if (audioInputs.length > 0) {
+            setHasMic(true);
+          }
+        }
+      }).catch(() => {
+        // Silently ignore device enumeration restrictions; default hasMic to true
+        setHasMic(true);
+      });
+    }
+
     return () => {
       try {
         rec.stop();
       } catch {}
     };
-  }, [continuousMode]);
+  }, [continuousMode, hasMic]);
 
   const toggleMic = () => {
     if (!recognitionRef.current) {
-      alert('Speech recognition is not supported in this browser. Please type commands in the input bar.');
+      setMicErrorNotice('Voice input is not supported in this browser. Please type commands directly in the input bar!');
+      setTimeout(() => setMicErrorNotice(null), 5000);
       return;
     }
 
     if (isListening) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch {}
       setIsListening(false);
       setTranscript('');
     } else {
@@ -261,19 +293,31 @@ export default function App() {
       try {
         recognitionRef.current.start();
         setIsListening(true);
-      } catch {
-        recognitionRef.current.stop();
+        setMicErrorNotice(null);
+      } catch (err: any) {
+        console.warn('Microphone start error:', err);
+        setIsListening(false);
+        setHasMic(false);
+        setMicErrorNotice('No microphone found or access denied. Type your command below – PRAJ will respond and execute!');
+        setTimeout(() => setMicErrorNotice(null), 5000);
       }
     }
   };
 
   const toggleContinuous = () => {
+    if (!hasMic) {
+      setMicErrorNotice('Connect a microphone to enable continuous voice wake-word loop.');
+      setTimeout(() => setMicErrorNotice(null), 4000);
+      return;
+    }
     const next = !continuousMode;
     setContinuousMode(next);
     if (next && !isListening && recognitionRef.current) {
       try {
         recognitionRef.current.start();
-      } catch {}
+      } catch {
+        setContinuousMode(false);
+      }
     }
   };
 
@@ -1081,6 +1125,8 @@ export default function App() {
             isSpeaking={isSpeaking}
             transcript={transcript}
             bridgeConnected={bridgeStatus.connected}
+            hasMic={hasMic}
+            micErrorNotice={micErrorNotice}
             onToggleMic={toggleMic}
           />
         </section>
@@ -1094,6 +1140,7 @@ export default function App() {
             continuousMode={continuousMode}
             onToggleContinuous={toggleContinuous}
             isProcessing={isProcessing}
+            hasMic={hasMic}
           />
         </section>
 

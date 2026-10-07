@@ -115,12 +115,14 @@ export function MasterSwitchModal({
               </span>
             </div>
 
-            {/* Web Server Indicator */}
+            {/* Web App / Server Indicator */}
             <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee]" />
+              <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 shadow-[0_0_8px_#22d3ee] animate-pulse" />
               <span className="text-slate-300">
-                Web Voice UI (Port 3000):{' '}
-                <strong className="text-cyan-400">ACTIVE</strong>
+                PRAJ Web Voice UI:{' '}
+                <strong className="text-cyan-400">
+                  {typeof window !== 'undefined' && window.location.port === '3000' ? 'PORT 3000 (LOCAL)' : 'ACTIVE (ONLINE)'}
+                </strong>
               </span>
             </div>
           </div>

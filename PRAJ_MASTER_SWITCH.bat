@@ -1,5 +1,7 @@
 @echo off
-title PRAJ SYSTEM - MASTER SWITCH & EMERGENCY KILL PANEL
+set "SCRIPT_DIR=%~dp0"
+cd /d "%SCRIPT_DIR%"
+title PRAJ SYSTEM - MASTER SWITCH CONSOLE
 color 0A
 cls
 
@@ -14,10 +16,11 @@ echo   [2] EMERGENCY KILL SWITCH (Immediately stop all programs)
 echo   [3] RESTART PRAJ (Clean reboot of all system components)
 echo   [4] ABORT SHUTDOWN ONLY (Cancel any active Windows host shutdown)
 echo   [5] CHECK STATUS (Inspect Bridge Port 5000 and Web Server Port 3000)
-echo   [6] AUTO-INSTALL PYTHON (1-Click Download and Configure Python for Windows)
+echo   [6] AUTO-INSTALL PYTHON (1-Click Download and Configure Python)
 echo   [7] EXIT CONSOLE
 echo.
 echo =====================================================================
+set "choice="
 set /p choice="Enter your selection [1-7] and press ENTER: "
 
 if "%choice%"=="1" goto LAUNCH_ALL
@@ -28,6 +31,7 @@ if "%choice%"=="5" goto CHECK_STATUS
 if "%choice%"=="6" goto INSTALL_PYTHON
 if "%choice%"=="7" goto EXIT_SCRIPT
 
+echo.
 echo Invalid selection. Please choose 1, 2, 3, 4, 5, 6, or 7.
 timeout /t 2 >nul
 goto MENU
@@ -40,54 +44,113 @@ echo                PRAJ MASTER SWITCH: STARTING SYSTEM
 echo =====================================================================
 echo.
 
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
+:: 1. Comprehensive Python detection (checks py launcher, PATH, and Python 3.13 / 3.12 / 3.11 locations)
+set "PY_CMD="
+
+:: Priority 1: py -3 launcher
+py -3 -c "import sys; assert sys.version_info >= (3, 8)" >nul 2>&1
+if %errorlevel% equ 0 (
+    set "PY_CMD=py -3"
+    goto FOUND_PYTHON
+)
+
+:: Priority 2: python command in current PATH
+python -c "import sys; assert sys.version_info >= (3, 8)" >nul 2>&1
+if %errorlevel% equ 0 (
+    set "PY_CMD=python"
+    goto FOUND_PYTHON
+)
+
+:: Priority 3: Check AppData user installations (Python 3.13, 3.12, 3.11, 3.10)
+for %%v in (Python313 Python312 Python311 Python310) do (
+    if exist "%LOCALAPPDATA%\Programs\Python\%%v\python.exe" (
+        set "PATH=%LOCALAPPDATA%\Programs\Python\%%v;%LOCALAPPDATA%\Programs\Python\%%v\Scripts;%PATH%"
+        set "PY_CMD=%LOCALAPPDATA%\Programs\Python\%%v\python.exe"
+        goto FOUND_PYTHON
+    )
+)
+
+:: Priority 4: Check Program Files installations
+for %%v in (Python313 Python312 Python311 Python310) do (
+    if exist "%ProgramFiles%\Python\%%v\python.exe" (
+        set "PATH=%ProgramFiles%\Python\%%v;%ProgramFiles%\Python\%%v\Scripts;%PATH%"
+        set "PY_CMD=%ProgramFiles%\Python\%%v\python.exe"
+        goto FOUND_PYTHON
+    )
+    if exist "%ProgramFiles%\%%v\python.exe" (
+        set "PATH=%ProgramFiles%\%%v;%ProgramFiles%\%%v\Scripts;%PATH%"
+        set "PY_CMD=%ProgramFiles%\%%v\python.exe"
+        goto FOUND_PYTHON
+    )
+)
+
+:FOUND_PYTHON
+if not defined PY_CMD (
     echo [ERROR] Python is not installed or not in Windows PATH!
     echo.
     if exist "INSTALL_PYTHON.bat" (
-        echo [*] Found INSTALL_PYTHON.bat in the current folder.
-        set /p RUN_PY="Auto-install Python now? (Y/N): "
-        if /i "%RUN_PY%"=="Y" (
-            call INSTALL_PYTHON.bat
-        )
+        echo [*] Running INSTALL_PYTHON.bat automatically...
+        call "%SCRIPT_DIR%INSTALL_PYTHON.bat"
     ) else (
-        echo Tip: Choose Option 6 in Master Switch to install Python automatically.
+        echo Please select Option [6] from the menu to auto-install Python.
     )
-    python --version >nul 2>&1
-    if %errorlevel% neq 0 (
-        pause
-        goto MENU
-    )
-)
-
-node --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js is not installed or not in Windows PATH!
-    echo Please install Node.js from https://nodejs.org/
-    pause
     goto MENU
 )
 
+echo [*] Python verified:
+%PY_CMD% --version
+
+:: 2. Check Node / npm (Optional: if not installed, will use cloud-hosted PRAJ Web App)
+set "NPM_CMD="
+call npm.cmd --version >nul 2>&1
+if %errorlevel% equ 0 (
+    set "NPM_CMD=npm.cmd"
+) else (
+    call npm --version >nul 2>&1
+    if %errorlevel% equ 0 (
+        set "NPM_CMD=npm"
+    )
+)
+
+if defined NPM_CMD (
+    echo [*] Node.js/npm verified: Local server mode available.
+) else (
+    echo [*] Note: Node.js is not in PATH. Will launch Python Desktop Bridge and open the cloud PRAJ Voice interface!
+)
+
+:: 3. Clear existing listeners on Port 5000 and 3000
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>&1
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>&1
 
+:: 4. Start Python Bridge
 echo [*] Step 1/3: Launching PRAJ Python Desktop Bridge (Port 5000)...
-start "PRAJ-Python-Bridge" cmd /k "python praj_desktop_bridge.py"
+start "PRAJ-Python-Bridge" cmd /k "cd /d "%SCRIPT_DIR%" && %PY_CMD% praj_desktop_bridge.py"
 
-if exist "package.json" (
-    if not exist "node_modules" (
-        echo [*] Installing dependencies first (npm install)...
-        call npm install
+:: 5. Start Local Web Server (if package.json and npm exist)
+if defined NPM_CMD (
+    if exist "package.json" (
+        echo [*] Step 2/3: Launching Web Voice Interface (Port 3000)...
+        if not exist "node_modules" (
+            echo [*] Installing dependencies first (%NPM_CMD% install)...
+            call %NPM_CMD% install
+        )
+        start "PRAJ-Web-Server" cmd /k "cd /d "%SCRIPT_DIR%" && (%NPM_CMD% run dev || %NPM_CMD% start || pause)"
+    ) else (
+        echo [*] Step 2/3: Using cloud-hosted PRAJ Web Interface...
     )
-    echo [*] Step 2/3: Launching Web Voice Interface (Port 3000)...
-    start "PRAJ-Web-Server" cmd /k "npm run dev || npm start || (echo [ERROR] npm failed to start server. & pause)"
 ) else (
-    echo [!] Note: package.json not found in current directory.
+    echo [*] Step 2/3: Using cloud-hosted PRAJ Web Interface...
 )
 
-echo [*] Step 3/3: Launching PRAJ dashboard in default browser...
+:: 6. Launch browser
+echo [*] Step 3/3: Opening browser to PRAJ voice dashboard...
 timeout /t 3 /nobreak >nul
-start http://localhost:3000
+netstat -aon | findstr ":3000" | findstr "LISTENING" >nul 2>&1
+if %errorlevel% equ 0 (
+    start http://localhost:3000
+) else (
+    start https://ais-dev-grpahkusxz6afiadipb4go-151229087198.asia-southeast1.run.app
+)
 
 echo.
 echo =====================================================================
@@ -188,31 +251,11 @@ echo =====================================================================
 echo       [*] 1-CLICK PYTHON AUTO-INSTALLER FOR WINDOWS
 echo =====================================================================
 echo.
-if exist "INSTALL_PYTHON.bat" (
-    call INSTALL_PYTHON.bat
+if exist "%SCRIPT_DIR%INSTALL_PYTHON.bat" (
+    call "%SCRIPT_DIR%INSTALL_PYTHON.bat"
 ) else (
-    echo [*] Checking if Python is already installed...
-    python --version >nul 2>&1
-    if %errorlevel% equ 0 (
-        for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo [FOUND] Python is already installed: %%v
-        echo [*] Installing required PRAJ bridge dependencies (flask, flask-cors, psutil, pywin32)...
-        pip install flask flask-cors psutil pywin32 --quiet --disable-pip-version-check
-        echo [OK] Python dependencies are ready!
-    ) else (
-        echo [!] Python is not installed.
-        echo [*] Downloading and running official Python 3.11 Windows installer...
-        powershell -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (New-Object System.Net.WebClient).DownloadFile('https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe', '%TEMP%\python-installer.exe')"
-        if exist "%TEMP%\python-installer.exe" (
-            echo [*] Installing Python silently to Windows PATH...
-            "%TEMP%\python-installer.exe" /quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_test=0
-            timeout /t 5 /nobreak >nul
-            del /f /q "%TEMP%\python-installer.exe" >nul 2>&1
-            echo [OK] Python installation completed!
-        ) else (
-            echo [!] Download failed. Launching python.org...
-            start https://www.python.org/downloads/
-        )
-    )
+    echo [*] Launching python installer...
+    start https://www.python.org/downloads/
 )
 echo.
 echo Press any key to return to Master Switch menu...

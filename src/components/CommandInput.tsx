@@ -20,6 +20,7 @@ interface CommandInputProps {
   continuousMode: boolean;
   onToggleContinuous: () => void;
   isProcessing: boolean;
+  hasMic?: boolean;
 }
 
 export function CommandInput({
@@ -29,6 +30,7 @@ export function CommandInput({
   continuousMode,
   onToggleContinuous,
   isProcessing,
+  hasMic = true,
 }: CommandInputProps) {
   const [inputVal, setInputVal] = useState('');
   const [attachedImage, setAttachedImage] = useState<string | null>(null);
@@ -170,7 +172,7 @@ export function CommandInput({
             id="btn-voice-input-mic"
             onClick={onToggleMic}
             disabled={isProcessing}
-            className={`flex items-center justify-center w-11 h-11 rounded-xl transition-all flex-shrink-0 mt-0.5 ${
+            className={`flex items-center justify-center w-11 h-11 rounded-xl transition-all flex-shrink-0 mt-0.5 cursor-pointer ${
               isListening
                 ? 'bg-gradient-to-tr from-cyan-600 to-cyan-400 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.4)] animate-pulse'
                 : 'bg-slate-800 hover:bg-slate-700/90 text-cyan-400 hover:text-cyan-300'

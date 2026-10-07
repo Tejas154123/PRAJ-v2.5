@@ -1,11 +1,13 @@
 import { motion } from 'motion/react';
-import { Mic, Volume2, ShieldCheck, Sparkles, Activity } from 'lucide-react';
+import { Mic, Volume2, ShieldCheck, Sparkles, Activity, Info } from 'lucide-react';
 
 interface VoiceVisualizerProps {
   isListening: boolean;
   isSpeaking: boolean;
   transcript: string;
   bridgeConnected: boolean;
+  hasMic?: boolean;
+  micErrorNotice?: string | null;
   onToggleMic: () => void;
 }
 
@@ -14,6 +16,8 @@ export function VoiceVisualizer({
   isSpeaking,
   transcript,
   bridgeConnected,
+  hasMic = true,
+  micErrorNotice,
   onToggleMic,
 }: VoiceVisualizerProps) {
   return (
@@ -102,7 +106,7 @@ export function VoiceVisualizer({
             <div className="flex flex-col items-center group">
               <Mic className="w-8 h-8 md:w-10 md:h-10 text-cyan-400 group-hover:scale-110 transition-transform" />
               <span className="text-[10px] md:text-xs font-semibold uppercase tracking-wider mt-1 text-slate-400 group-hover:text-cyan-300">
-                Tap to Talk
+                {hasMic ? 'Tap to Talk' : 'Tap to Talk'}
               </span>
             </div>
           )}
@@ -138,9 +142,18 @@ export function VoiceVisualizer({
         ))}
       </div>
 
-      {/* Dynamic Status / Live Transcript */}
+      {/* Dynamic Status / Live Transcript / Mic Notice */}
       <div className="w-full text-center max-w-xl min-h-[3.25rem] flex flex-col items-center justify-center mt-1">
-        {transcript ? (
+        {micErrorNotice ? (
+          <motion.div
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="px-4 py-2 bg-cyan-950/60 border border-cyan-500/50 rounded-xl text-cyan-200 text-xs md:text-sm font-medium inline-flex items-center gap-2"
+          >
+            <Info className="w-4 h-4 text-cyan-400 shrink-0" />
+            <span>{micErrorNotice}</span>
+          </motion.div>
+        ) : transcript ? (
           <motion.div
             initial={{ opacity: 0, y: 5 }}
             animate={{ opacity: 1, y: 0 }}
